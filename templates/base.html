@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}TAS Resume Scanner{% endblock %}</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="navbar">
+        <a class="brand" href="{{ url_for('index') }}">TAS Resume Scanner</a>
+        <nav class="nav-links">
+          <a class="nav-link" href="{{ url_for('index') }}">Home</a>
+          <a class="nav-link" href="{{ url_for('about') }}">About</a>
+          <a class="nav-link" href="{{ url_for('contact') }}">Contact</a>
+          {% if session.user %}
+          <a class="nav-link" href="{{ url_for('history') }}">History</a>
+          <a class="auth-pill" href="{{ url_for('logout') }}">Logout</a>
+          {% else %}
+          <a class="auth-pill" href="{{ url_for('login') }}">Login</a>
+          {% endif %}
+        </nav>
+      </header>
+
+      {% with messages = get_flashed_messages(with_categories=true) %} {% if
+      messages %}
+      <div class="alert-wrapper">
+        {% for category, message in messages %}
+        <div class="alert {{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %} {% endwith %} {% block content %}{% endblock %}
+    </div>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+  </body>
+</html>

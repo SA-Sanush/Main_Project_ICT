@@ -1,0 +1,28 @@
+{% extends "base.html" %} {% block title %}Login | TAS Resume Scanner{% endblock
+%} {% block content %}
+<main class="content-card">
+  <section class="upload-panel">
+    <h2>Login</h2>
+    <p class="note">Access scan history and contact features by logging in.</p>
+    <form method="post" class="auth-form">
+      <label>
+        Username
+        <input type="text" name="username" placeholder="admin" required />
+      </label>
+      <label>
+        Password
+        <input
+          type="password"
+          name="password"
+          placeholder="Password123!"
+          required
+        />
+      </label>
+      <button type="submit" class="primary-button">Sign In</button>
+    </form>
+    <p class="hint">
+      Default account: <strong>admin</strong> / <strong>Password123!</strong>
+    </p>
+  </section>
+</main>
+{% endblock %}

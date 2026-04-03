@@ -1,0 +1,54 @@
+{% extends "base.html" %} {% block title %}TAS Scan Result{% endblock %} {%
+block content %}
+<main class="content-card result-card">
+  <section class="score-block">
+    <div class="score-pill">Total Score</div>
+    <div class="score-value">{{ score }} / 100</div>
+    <div class="file-info">Uploaded: <strong>{{ filename }}</strong></div>
+  </section>
+  <section class="chart-block">
+    <img src="{{ chart_url }}" alt="Resume score chart" />
+  </section>
+  <section class="criteria-block">
+    <h2>Criteria Breakdown</h2>
+    <div class="criteria-grid">
+      {% for name, value in criteria_scores.items() %}
+      <div class="criteria-card">
+        <strong>{{ name }}</strong>
+        <span>{{ value }} / 10</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="jobs-block">
+    <h2>Recommended Jobs</h2>
+    {% if matched_jobs %}
+    <div class="jobs-grid">
+      {% for job in matched_jobs %}
+      <article class="job-card">
+        <h3>{{ job.title }}</h3>
+        <p>{{ job.description }}</p>
+        <span class="match-score">Match: {{ job.match_score }}%</span>
+        <div class="keyword-list">
+          Keywords: {{ job.matched_keywords | join(", ") }}
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">
+      No strong job matches found yet. Try a more focused resume or add industry
+      keywords.
+    </p>
+    {% endif %}
+  </section>
+  <div class="actions-row">
+    <a class="secondary-button" href="{{ url_for('index') }}"
+      >Upload Another Resume</a
+    >
+    <a class="secondary-button" href="{{ url_for('history') }}"
+      >View Scan History</a
+    >
+  </div>
+</main>
+{% endblock %}

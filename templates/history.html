@@ -1,0 +1,32 @@
+{% extends "base.html" %} {% block title %}Scan History{% endblock %} {% block
+content %}
+<main class="content-card result-card">
+  <header class="hero result-hero">
+    <div>
+      <h1>Resume Scan History</h1>
+      <p>Review your recent resume uploads, scores, and job match summaries.</p>
+    </div>
+  </header>
+  {% if rows %}
+  <div class="criteria-block">
+    <h2>Recent Uploads</h2>
+    <div class="jobs-grid">
+      {% for row in rows %}
+      <article class="job-card">
+        <h3>{{ row[1] }}</h3>
+        <p>Scored <strong>{{ row[3] }}/100</strong> on {{ row[2] }}</p>
+        <p>Recommended jobs: {{ row[4] or 'None' }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <p class="empty-state">
+    No previous scans yet. Upload a resume to see your first result.
+  </p>
+  {% endif %}
+  <div class="actions-row">
+    <a class="secondary-button" href="{{ url_for('index') }}">Back to Upload</a>
+  </div>
+</main>
+{% endblock %}

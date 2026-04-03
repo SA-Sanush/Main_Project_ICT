@@ -1,0 +1,51 @@
+{% extends "base.html" %} {% block title %}Contact Us | TAS Resume Scanner{%
+endblock %} {% block content %}
+<main class="content-card contact-card">
+  <section class="upload-panel contact-panel">
+    <div class="contact-hero">
+      <span class="eyebrow">Let's Connect</span>
+      <h2>Contact Us</h2>
+      <p class="note">
+        Send us feedback or ask for support about your TAS resume scan.
+      </p>
+    </div>
+    <form method="post" class="contact-form">
+      <label>
+        Name
+        <input type="text" name="name" placeholder="Your name" required />
+      </label>
+      <label>
+        Email
+        <input
+          type="email"
+          name="email"
+          placeholder="you@example.com"
+          required
+        />
+      </label>
+      <label>
+        Subject
+        <input type="text" name="subject" placeholder="How can we help?" />
+      </label>
+      <label>
+        Message
+        <textarea
+          name="message"
+          placeholder="Tell us about your question or feedback"
+          rows="6"
+          required
+        ></textarea>
+      </label>
+      <button type="submit" class="primary-button contact-submit">
+        Send Message
+      </button>
+    </form>
+
+    <div class="contact-badges">
+      <span class="pill">Fast response</span>
+      <span class="pill">Secure submission</span>
+      <span class="pill">Friendly team</span>
+    </div>
+  </section>
+</main>
+{% endblock %}

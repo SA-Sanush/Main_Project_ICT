@@ -1,0 +1,33 @@
+{% extends "base.html" %} {% block title %}Resume TAS Scanner{% endblock %} {%
+block content %}
+<main class="content-card">
+  <section class="upload-panel">
+    <h2>Upload Resume</h2>
+    <p class="note">
+      Upload your resume and get a professional TAS match score, criteria
+      breakdown, and tailored job recommendations.
+    </p>
+    <form method="post" enctype="multipart/form-data" id="resume-form">
+      <label class="file-label" for="resume_file">
+        <span>Choose a PDF or TXT resume file</span>
+        <input
+          id="resume_file"
+          type="file"
+          name="resume_file"
+          accept=".pdf,.txt"
+          required
+        />
+      </label>
+      <div class="hint">
+        We recommend PDF format for best TAS compatibility.
+      </div>
+      <button type="submit" class="primary-button">Scan Resume</button>
+    </form>
+    <p class="note">
+      Your resume will be analyzed for contact information, summary, experience,
+      education, skills, TAS optimization, consistency, proofreading, format,
+      and relevance.
+    </p>
+  </section>
+</main>
+{% endblock %}
