@@ -1,8 +1,10 @@
 import os
 import re
 import csv
+import json
 import sqlite3
 import traceback
+from ast import literal_eval
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -77,6 +79,7 @@ def init_db() -> None:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS reports ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "user_id INTEGER,"
             "filename TEXT,"
             "uploaded_at TEXT,"
             "score INTEGER,"
@@ -103,6 +106,8 @@ def init_db() -> None:
         )
         conn.commit()
         create_default_user(conn)
+        ensure_reports_user_scope(conn)
+        assign_legacy_reports_to_default_user(conn)
     finally:
         conn.close()
 
@@ -116,6 +121,60 @@ def create_default_user(conn: sqlite3.Connection) -> None:
             ("admin", password_hash),
         )
         conn.commit()
+
+
+def get_primary_history_user_row(conn: sqlite3.Connection) -> tuple[int, str] | None:
+    row = conn.execute(
+        "SELECT id, username FROM users WHERE username <> ? ORDER BY id ASC LIMIT 1",
+        ("admin",),
+    ).fetchone()
+    if row:
+        return row
+    return conn.execute(
+        "SELECT id, username FROM users WHERE username = ? LIMIT 1",
+        ("admin",),
+    ).fetchone()
+
+
+def parse_report_payload(value: str | None, fallback):
+    if not value:
+        return fallback
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        try:
+            return literal_eval(value)
+        except (ValueError, SyntaxError):
+            return fallback
+
+
+def summarize_matched_jobs(matched_jobs_value: str | None) -> str:
+    parsed = parse_report_payload(matched_jobs_value, [])
+    if isinstance(parsed, list):
+        titles = []
+        for item in parsed:
+            if isinstance(item, dict):
+                title = item.get("title")
+                if title:
+                    titles.append(title)
+            elif isinstance(item, str) and item.strip():
+                titles.append(item.strip())
+        return ", ".join(titles) if titles else "None"
+    if isinstance(parsed, str):
+        return parsed
+    return "None"
+
+
+def get_accessible_user_ids(conn: sqlite3.Connection, current_user_id: int) -> list[int]:
+    accessible_user_ids = [current_user_id]
+    primary_row = get_primary_history_user_row(conn)
+    admin_row = conn.execute(
+        "SELECT id FROM users WHERE username = ? LIMIT 1",
+        ("admin",),
+    ).fetchone()
+    if primary_row and current_user_id == primary_row[0] and admin_row and admin_row[0] != current_user_id:
+        accessible_user_ids.append(admin_row[0])
+    return accessible_user_ids
 
 
 def load_job_data() -> pd.DataFrame:
@@ -268,17 +327,18 @@ def find_applicable_jobs(text: str) -> list:
     return recommendations[:5]
 
 
-def save_report(filename: str, score: int, matched_jobs: list, criteria_scores: dict) -> None:
+def save_report(user_id: int | None, filename: str, score: int, matched_jobs: list, criteria_scores: dict) -> None:
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
-            "INSERT INTO reports (filename, uploaded_at, score, matched_jobs, criteria) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO reports (user_id, filename, uploaded_at, score, matched_jobs, criteria) VALUES (?, ?, ?, ?, ?, ?)",
             (
+                user_id,
                 filename,
                 datetime.utcnow().isoformat(),
                 score,
-                ", ".join([job["title"] for job in matched_jobs]) or "None",
-                str(criteria_scores),
+                json.dumps(matched_jobs),
+                json.dumps(criteria_scores),
             ),
         )
         conn.commit()
@@ -309,6 +369,45 @@ def get_user(username: str) -> dict | None:
         conn.close()
 
 
+def get_current_user() -> dict | None:
+    username = session.get("user")
+    if not username:
+        return None
+    return get_user(username)
+
+
+def create_user(username: str, password: str) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        conn.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (username, generate_password_hash(password)),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+
+def ensure_reports_user_scope(conn: sqlite3.Connection) -> None:
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(reports)").fetchall()]
+    if "user_id" not in columns:
+        conn.execute("ALTER TABLE reports ADD COLUMN user_id INTEGER")
+        conn.commit()
+
+
+def assign_legacy_reports_to_default_user(conn: sqlite3.Connection) -> None:
+    primary_row = get_primary_history_user_row(conn)
+    if primary_row:
+        conn.execute(
+            "UPDATE reports SET user_id = ? WHERE user_id IS NULL",
+            (primary_row[0],),
+        )
+        conn.commit()
+
+
 def login_required(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
@@ -321,6 +420,10 @@ def login_required(view_func):
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+    if session.get("user"):
+        flash("You are already logged in.", "success")
+        return redirect(url_for("index"))
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -332,6 +435,43 @@ def login():
         flash("Invalid username or password.", "error")
         return redirect(url_for("login"))
     return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if session.get("user"):
+        flash("You are already logged in.", "success")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirm_password = request.form.get("confirm_password", "")
+
+        if len(username) < 3:
+            flash("Username must be at least 3 characters long.", "error")
+            return redirect(url_for("register"))
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", username):
+            flash("Username can only contain letters, numbers, dots, underscores, and hyphens.", "error")
+            return redirect(url_for("register"))
+        if len(password) < 8:
+            flash("Password must be at least 8 characters long.", "error")
+            return redirect(url_for("register"))
+        if password != confirm_password:
+            flash("Passwords do not match.", "error")
+            return redirect(url_for("register"))
+        if get_user(username):
+            flash("That username is already registered. Please choose another one.", "error")
+            return redirect(url_for("register"))
+
+        if create_user(username, password):
+            flash("Account created successfully. Please log in with your new credentials.", "success")
+            return redirect(url_for("login"))
+
+        flash("We could not create your account right now. Please try again.", "error")
+        return redirect(url_for("register"))
+
+    return render_template("register.html")
 
 
 @app.route("/logout")
@@ -395,7 +535,14 @@ def index():
             chart_path = CHART_FOLDER / "score_chart.png"
             generate_chart(criteria_scores, chart_path)
             matched_jobs = find_applicable_jobs(text)
-            save_report(filename, total_score, matched_jobs, criteria_scores)
+            current_user = get_current_user()
+            save_report(
+                current_user["id"] if current_user else None,
+                filename,
+                total_score,
+                matched_jobs,
+                criteria_scores,
+            )
 
             return render_template(
                 "result.html",
@@ -416,12 +563,71 @@ def index():
 @app.route("/history")
 @login_required
 def history():
+    current_user = get_current_user()
     conn = sqlite3.connect(DB_PATH)
     try:
-        rows = conn.execute("SELECT id, filename, uploaded_at, score, matched_jobs FROM reports ORDER BY uploaded_at DESC LIMIT 20").fetchall()
+        accessible_user_ids = get_accessible_user_ids(conn, current_user["id"])
+        placeholders = ", ".join(["?"] * len(accessible_user_ids))
+        raw_rows = conn.execute(
+            f"SELECT id, filename, uploaded_at, score, matched_jobs "
+            f"FROM reports WHERE user_id IN ({placeholders}) ORDER BY uploaded_at DESC LIMIT 20",
+            tuple(accessible_user_ids),
+        ).fetchall()
     finally:
         conn.close()
+    rows = [
+        {
+            "id": row[0],
+            "filename": row[1],
+            "uploaded_at": row[2],
+            "score": row[3],
+            "matched_jobs_summary": summarize_matched_jobs(row[4]),
+        }
+        for row in raw_rows
+    ]
     return render_template("history.html", rows=rows)
+
+
+@app.route("/history/<int:report_id>")
+@login_required
+def history_detail(report_id: int):
+    current_user = get_current_user()
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        accessible_user_ids = get_accessible_user_ids(conn, current_user["id"])
+        placeholders = ", ".join(["?"] * len(accessible_user_ids))
+        row = conn.execute(
+            f"SELECT id, filename, uploaded_at, score, matched_jobs, criteria "
+            f"FROM reports WHERE id = ? AND user_id IN ({placeholders})",
+            (report_id, *accessible_user_ids),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        flash("That history entry is not available for this account.", "error")
+        return redirect(url_for("history"))
+
+    matched_jobs = parse_report_payload(row[4], [])
+    criteria_scores = parse_report_payload(row[5], {})
+    if isinstance(matched_jobs, str):
+        matched_jobs = [{"title": title.strip()} for title in matched_jobs.split(",") if title.strip()]
+    if not isinstance(matched_jobs, list):
+        matched_jobs = []
+    if not isinstance(criteria_scores, dict):
+        criteria_scores = {}
+
+    return render_template(
+        "history_detail.html",
+        report={
+            "id": row[0],
+            "filename": row[1],
+            "uploaded_at": row[2],
+            "score": row[3],
+        },
+        matched_jobs=matched_jobs,
+        criteria_scores=criteria_scores,
+    )
 
 
 if __name__ == "__main__":
