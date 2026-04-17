@@ -13,9 +13,17 @@ content %}
     <div class="jobs-grid">
       {% for row in rows %}
       <article class="job-card">
-        <h3>{{ row[1] }}</h3>
-        <p>Scored <strong>{{ row[3] }}/100</strong> on {{ row[2] }}</p>
-        <p>Recommended jobs: {{ row[4] or 'None' }}</p>
+        <h3>{{ row.filename }}</h3>
+        <p>Scored <strong>{{ row.score }}/100</strong> on {{ row.uploaded_at }}</p>
+        <p>Recommended jobs: {{ row.matched_jobs_summary }}</p>
+        <div class="actions-row">
+          <a
+            class="secondary-button"
+            href="{{ url_for('history_detail', report_id=row.id) }}"
+          >
+            Open Report
+          </a>
+        </div>
       </article>
       {% endfor %}
     </div>

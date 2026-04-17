@@ -1,0 +1,57 @@
+{% extends "base.html" %} {% block title %}Saved Report{% endblock %} {% block
+content %}
+<main class="content-card result-card">
+  <section class="score-block">
+    <div class="score-pill">Saved Report</div>
+    <div class="score-value">{{ report.score }} / 100</div>
+    <div class="file-info">
+      Uploaded: <strong>{{ report.filename }}</strong>
+    </div>
+    <div class="file-info">Saved on {{ report.uploaded_at }}</div>
+  </section>
+  <section class="criteria-block">
+    <h2>Criteria Breakdown</h2>
+    {% if criteria_scores %}
+    <div class="criteria-grid">
+      {% for name, value in criteria_scores.items() %}
+      <div class="criteria-card">
+        <strong>{{ name }}</strong>
+        <span>{{ value }} / 10</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">Detailed scoring is not available for this saved report.</p>
+    {% endif %}
+  </section>
+  <section class="jobs-block">
+    <h2>Recommended Jobs</h2>
+    {% if matched_jobs %}
+    <div class="jobs-grid">
+      {% for job in matched_jobs %}
+      <article class="job-card">
+        <h3>{{ job.title or job }}</h3>
+        {% if job.description %}
+        <p>{{ job.description }}</p>
+        {% endif %}
+        {% if job.match_score is defined %}
+        <span class="match-score">Match: {{ job.match_score }}%</span>
+        {% endif %}
+        {% if job.matched_keywords %}
+        <div class="keyword-list">
+          Keywords: {{ job.matched_keywords | join(", ") }}
+        </div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No saved job recommendations were found for this report.</p>
+    {% endif %}
+  </section>
+  <div class="actions-row">
+    <a class="secondary-button" href="{{ url_for('history') }}">Back to History</a>
+    <a class="secondary-button" href="{{ url_for('index') }}">Upload Another Resume</a>
+  </div>
+</main>
+{% endblock %}
