@@ -1,0 +1,54 @@
+{% extends "base.html" %} {% block title %}Register | TAS Resume Scanner{% endblock
+%} {% block content %}
+<main class="content-card">
+  <section class="upload-panel">
+    <h2>Create Account</h2>
+    <p class="note">Register a new account, then sign in to access protected features.</p>
+    <form method="post" class="auth-form">
+      <label>
+        Username
+        <input
+          type="text"
+          name="username"
+          placeholder="Choose a username"
+          minlength="3"
+          required
+        />
+      </label>
+      <label>
+        Password
+        <input
+          type="password"
+          id="register_password"
+          name="password"
+          placeholder="At least 8 characters"
+          minlength="8"
+          required
+        />
+      </label>
+      <label>
+        Confirm Password
+        <input
+          type="password"
+          id="register_confirm_password"
+          name="confirm_password"
+          placeholder="Re-enter your password"
+          minlength="8"
+          required
+        />
+      </label>
+      <label class="password-toggle">
+        <input
+          type="checkbox"
+          data-toggle-password="#register_password,#register_confirm_password"
+        />
+        <span>Show password</span>
+      </label>
+      <button type="submit" class="primary-button">Register</button>
+    </form>
+    <p class="auth-switch">
+      Already have an account? <a href="{{ url_for('login') }}">Sign in</a>
+    </p>
+  </section>
+</main>
+{% endblock %}
