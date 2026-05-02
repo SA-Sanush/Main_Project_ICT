@@ -66,6 +66,38 @@ def test_target_job_match_expands_title_only_full_stack_role():
     assert "machine learning" not in match["missing_keywords"]
 
 
+def test_skill_extraction_understands_common_aliases():
+    profile = app_module.extract_resume_profile(
+        "Developed ML pipelines with REST APIs, Git workflows, and responsive design."
+    )
+
+    assert "machine learning" in profile["skills"]
+    assert "api development" in profile["skills"]
+    assert "git" in profile["skills"]
+    assert "css" in profile["skills"]
+
+
+def test_role_adjusted_score_changes_weighting():
+    criteria = {
+        "Contact Information": 10,
+        "Professional Summary": 4,
+        "Work Experience": 5,
+        "Education": 5,
+        "Skills": 10,
+        "ATS Optimization": 6,
+        "Consistency": 6,
+        "Proofreading": 8,
+        "File Format": 10,
+        "Relevance": 9,
+    }
+
+    default_score = app_module.calculate_weighted_score(criteria)
+    analyst_score = app_module.calculate_role_adjusted_score(criteria, "Data Analyst")
+
+    assert analyst_score != default_score
+    assert app_module.scoring_weights_for_role("Data Analyst")["Skills"] > app_module.SCORING_WEIGHTS["Skills"]
+
+
 def test_csrf_blocks_post_when_enabled(client):
     app_module.app.config["CSRF_ENABLED"] = True
     response = client.post("/contact", data={"name": "Alex", "email": "a@example.com", "message": "Hi"})
@@ -89,7 +121,20 @@ def test_analyze_txt_resume_saves_report_and_deletes_temp_upload(client):
     assert response.status_code == 200
     assert b"Total Score" in response.data
     assert b"Detected explicit skills" in response.data
+    assert b"Analysis Steps" in response.data
+    assert b"Suggested Bullet Rewrites" in response.data
     assert not any(app_module.UPLOAD_FOLDER.rglob("*.txt"))
+
+
+def test_rewrite_resume_bullets_generates_local_fix():
+    rewrites = app_module.rewrite_resume_bullets(
+        "- Helped with reports for business team",
+        "Data Analyst",
+    )
+
+    assert rewrites
+    assert rewrites[0]["before"] == "Helped with reports for business team"
+    assert "measurable outcomes" in rewrites[0]["after"]
 
 
 def test_rejects_file_with_mismatched_extension(client):
@@ -144,6 +189,7 @@ def test_register_login_history_and_pdf_export(client):
     detail = client.get(f"/history/{report_id}")
 
     assert b"Detected explicit skills" in detail.data
+    assert b"Analysis Steps" in detail.data
     assert export.status_code == 200
     assert export.data.startswith(b"%PDF")
     assert export.headers["Content-Type"] == "application/pdf"

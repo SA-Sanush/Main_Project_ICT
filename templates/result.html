@@ -63,6 +63,20 @@
     </div>
   </section>
 
+  {% if analysis_steps %}
+  <section class="jobs-block">
+    <h2>Analysis Steps</h2>
+    <div class="assistant-timeline">
+      {% for step in analysis_steps %}
+      <article class="assistant-step">
+        <strong>{{ step.label }}</strong>
+        <p>{{ step.detail }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
   <section class="jobs-block">
     <h2>Resume Improvement Suggestions</h2>
     {% if suggestions %}
@@ -78,6 +92,22 @@
     <p class="empty-state">No major improvement suggestions were generated for this scan.</p>
     {% endif %}
   </section>
+
+  {% if bullet_rewrites %}
+  <section class="jobs-block">
+    <h2>Suggested Bullet Rewrites</h2>
+    <div class="rewrite-grid">
+      {% for rewrite in bullet_rewrites %}
+      <article class="rewrite-card">
+        <span>Before</span>
+        <p>{{ rewrite.before }}</p>
+        <span>After</span>
+        <p>{{ rewrite.after }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
 
   <section class="jobs-block">
     <h2>Recommended Jobs</h2>

@@ -66,6 +66,34 @@ content %}
     <p class="empty-state">No saved improvement suggestions were found for this report.</p>
     {% endif %}
   </section>
+  {% if analysis.analysis_steps %}
+  <section class="jobs-block">
+    <h2>Analysis Steps</h2>
+    <div class="assistant-timeline">
+      {% for step in analysis.analysis_steps %}
+      <article class="assistant-step">
+        <strong>{{ step.label }}</strong>
+        <p>{{ step.detail }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+  {% if analysis.bullet_rewrites %}
+  <section class="jobs-block">
+    <h2>Suggested Bullet Rewrites</h2>
+    <div class="rewrite-grid">
+      {% for rewrite in analysis.bullet_rewrites %}
+      <article class="rewrite-card">
+        <span>Before</span>
+        <p>{{ rewrite.before }}</p>
+        <span>After</span>
+        <p>{{ rewrite.after }}</p>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
   <section class="jobs-block">
     <h2>Recommended Jobs</h2>
     {% if matched_jobs %}

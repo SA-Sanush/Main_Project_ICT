@@ -91,12 +91,17 @@ WEAK_VERBS = ["helped", "worked on", "responsible for", "handled", "assisted", "
 SKILL_SYNONYMS = {
     "python": ["python", "py"],
     "sql": ["sql", "mysql", "postgresql", "postgres", "sqlite", "database"],
+    "pandas": ["pandas", "dataframe", "dataframes"],
     "excel": ["excel", "spreadsheets", "vlookup", "pivot table"],
     "data visualization": ["data visualization", "tableau", "power bi", "matplotlib", "seaborn", "dashboard"],
-    "machine learning": ["machine learning", "ml", "scikit-learn", "sklearn", "modeling", "predictive"],
+    "machine learning": ["machine learning", "ml", "machine-learning", "scikit-learn", "sklearn", "modeling", "predictive"],
     "nlp": ["nlp", "natural language processing", "spacy", "bert", "transformers"],
-    "flask": ["flask", "web api", "rest api"],
+    "flask": ["flask", "web api", "rest api", "rest apis"],
     "javascript": ["javascript", "js", "typescript", "react", "node"],
+    "api development": ["api", "apis", "rest api", "rest apis", "endpoint", "endpoints"],
+    "git": ["git", "github", "version control"],
+    "html": ["html", "html5"],
+    "css": ["css", "css3", "responsive design", "responsive"],
     "communication": ["communication", "presentation", "stakeholder", "stakeholders", "collaboration"],
     "leadership": ["leadership", "led", "managed", "mentored", "ownership"],
     "testing": ["testing", "pytest", "unit test", "qa", "automation"],
@@ -133,6 +138,14 @@ SCORING_WEIGHTS = {
     "Proofreading": 0.06,
     "File Format": 0.04,
     "Relevance": 0.03,
+}
+
+ROLE_WEIGHT_OVERRIDES = {
+    "data analyst": {"Skills": 0.28, "Relevance": 0.08, "Work Experience": 0.16, "Education": 0.08},
+    "software engineer": {"Skills": 0.26, "Work Experience": 0.22, "ATS Optimization": 0.12, "Relevance": 0.06},
+    "developer": {"Skills": 0.28, "Work Experience": 0.22, "ATS Optimization": 0.12, "Relevance": 0.06},
+    "product manager": {"Professional Summary": 0.14, "Work Experience": 0.22, "Skills": 0.16, "Relevance": 0.08},
+    "technical writer": {"Professional Summary": 0.16, "Proofreading": 0.12, "ATS Optimization": 0.12, "Relevance": 0.08},
 }
 
 try:
@@ -421,6 +434,10 @@ def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip()).lower()
 
 
+def alias_in_text(text: str, alias: str) -> bool:
+    return re.search(rf"(?<![a-z0-9+#.-]){re.escape(alias)}(?![a-z0-9+#.-])", text) is not None
+
+
 def extract_resume_profile(raw_text: str) -> dict:
     text = normalize_text(raw_text)
     doc = NLP(raw_text) if NLP else None
@@ -434,7 +451,7 @@ def extract_resume_profile(raw_text: str) -> dict:
 
     skills = []
     for canonical, aliases in SKILL_SYNONYMS.items():
-        if any(alias in text for alias in aliases):
+        if any(alias_in_text(text, alias) for alias in aliases):
             skills.append(canonical)
 
     years = [int(match.group(0)) for match in YEAR_PATTERN.finditer(text)]
@@ -548,7 +565,11 @@ def explain_education(text: str, score: int) -> str:
 
 def detect_skills(text: str, profile: dict | None = None) -> int:
     extracted = set((profile or {}).get("skills", []))
-    tech_skills = ["python", "sql", "excel", "flask", "data visualization", "javascript", "machine learning", "nlp", "testing"]
+    tech_skills = [
+        "python", "sql", "pandas", "excel", "flask", "data visualization",
+        "javascript", "machine learning", "nlp", "testing", "api development",
+        "git", "html", "css"
+    ]
     soft_skills = ["communication", "teamwork", "problem solving", "leadership", "adaptability", "collaboration", "organization"]
     found = len(extracted)
     found += sum(1 for skill in tech_skills + soft_skills if skill in text and skill not in extracted)
@@ -662,8 +683,72 @@ def calculate_weighted_score(criteria_scores: dict) -> int:
     return int(np.clip(round(weighted * 10), 0, 100))
 
 
+def scoring_weights_for_role(target_title: str = "") -> dict:
+    weights = SCORING_WEIGHTS.copy()
+    normalized_title = normalize_text(target_title)
+    for role, overrides in ROLE_WEIGHT_OVERRIDES.items():
+        if role in normalized_title:
+            weights.update(overrides)
+            break
+    total = sum(weights.values())
+    return {name: value / total for name, value in weights.items()} if total else SCORING_WEIGHTS.copy()
+
+
+def calculate_role_adjusted_score(criteria_scores: dict, target_title: str = "") -> int:
+    weights = scoring_weights_for_role(target_title)
+    weighted = sum(criteria_scores[name] * weights.get(name, 0.0) for name in criteria_scores)
+    return int(np.clip(round(weighted * 10), 0, 100))
+
+
+def build_analysis_steps(criteria_scores: dict, matched_jobs: list, profile: dict, target_title: str = "") -> list[dict]:
+    top_match = matched_jobs[0] if matched_jobs else None
+    role_text = target_title or (top_match or {}).get("title") or "the selected role"
+    return [
+        {
+            "label": "Parsed Resume",
+            "detail": f"Extracted {profile.get('word_count', 0)} words and {len(profile.get('skills', []))} skill signal(s).",
+        },
+        {
+            "label": "Checked ATS Signals",
+            "detail": f"Strongest area: {max(criteria_scores, key=criteria_scores.get)}. Weakest area: {min(criteria_scores, key=criteria_scores.get)}.",
+        },
+        {
+            "label": "Compared Target Role",
+            "detail": f"Compared resume terms with {role_text} using role hints and weighted keyword overlap.",
+        },
+        {
+            "label": "Generated Fixes",
+            "detail": "Prioritized missing keywords, weak phrasing, measurable impact, and formatting signals.",
+        },
+    ]
+
+
+def extract_improvable_bullets(raw_text: str) -> list[str]:
+    bullets = []
+    for line in raw_text.splitlines():
+        cleaned = line.strip().lstrip("-* \u2022").strip()
+        if len(cleaned) < 18:
+            continue
+        lowered = normalize_text(cleaned)
+        if any(weak in lowered for weak in WEAK_VERBS) or not re.search(r"\d|%|\$|increased|reduced|improved|optimized|delivered", lowered):
+            bullets.append(cleaned)
+    return bullets[:3]
+
+
+def rewrite_resume_bullets(raw_text: str, target_title: str = "") -> list[dict]:
+    rewrites = []
+    role_phrase = f" for {target_title}" if target_title else ""
+    for bullet in extract_improvable_bullets(raw_text):
+        cleaned = re.sub(r"\b(?:helped|assisted|worked on|responsible for|handled|participated in)\b", "Delivered", bullet, flags=re.IGNORECASE)
+        cleaned = cleaned[0].upper() + cleaned[1:] if cleaned else bullet
+        if not re.search(r"\d|%|\$|increased|reduced|improved|optimized", normalize_text(cleaned)):
+            cleaned = f"Improved {cleaned[0].lower() + cleaned[1:]}{role_phrase}, adding measurable outcomes such as time saved, quality gains, or user impact."
+        rewrites.append({"before": bullet, "after": compact_reason(cleaned, 240)})
+    return rewrites
+
+
 def text_contains_alias(text: str, alias: str) -> bool:
-    return re.search(rf"(?<![a-z0-9+#.-]){re.escape(alias)}(?![a-z0-9+#.-])", text) is not None
+    return alias_in_text(text, alias)
 
 
 def tokenize_for_similarity(text: str) -> list[str]:
@@ -1015,7 +1100,8 @@ def build_simple_pdf(lines: list[str]) -> bytes:
 
 def report_lines(payload: dict) -> list[str]:
     report = payload["report"]
-    score_details = payload.get("analysis", {}).get("score_details", {})
+    analysis = payload.get("analysis", {})
+    score_details = analysis.get("score_details", {})
     lines = [
         "ATS Resume Scanner Report",
         f"File: {report['filename']}",
@@ -1031,6 +1117,17 @@ def report_lines(payload: dict) -> list[str]:
     lines.append("")
     lines.append("Suggestions")
     lines.extend(f"- {suggestion}" for suggestion in payload["suggestions"] or ["No suggestions saved."])
+    if analysis.get("bullet_rewrites"):
+        lines.append("")
+        lines.append("Suggested Bullet Rewrites")
+        for rewrite in analysis["bullet_rewrites"][:3]:
+            lines.append(f"- Before: {rewrite.get('before', '')}")
+            lines.append(f"  After: {rewrite.get('after', '')}")
+    if analysis.get("analysis_steps"):
+        lines.append("")
+        lines.append("Analysis Steps")
+        for step in analysis["analysis_steps"][:4]:
+            lines.append(f"- {step.get('label', '')}: {step.get('detail', '')}")
     lines.append("")
     lines.append("Matches")
     for job in payload["matched_jobs"]:
@@ -1195,13 +1292,18 @@ def index():
             target_job = build_target_job_match(text, target_title, target_description)
             criteria_scores = build_criteria_scores(text, file_ext, profile, normalize_text(target_text))
             score_details = build_score_details(criteria_scores, text, file_ext, profile, normalize_text(target_text))
-            total_score = calculate_weighted_score(criteria_scores)
+            total_score = calculate_role_adjusted_score(criteria_scores, target_title)
             matched_jobs = find_applicable_jobs(text, profile, target_job)
             suggestions = build_resume_suggestions(criteria_scores, matched_jobs, profile, text)
             previous_score = get_latest_score(current_user["id"] if current_user else None)
+            analysis_steps = build_analysis_steps(criteria_scores, matched_jobs, profile, target_title)
+            bullet_rewrites = rewrite_resume_bullets(extracted_text, target_title)
             profile["target_role"] = target_title
             profile["target_description_provided"] = bool(target_description)
             profile["score_details"] = score_details
+            profile["score_weights"] = scoring_weights_for_role(target_title)
+            profile["analysis_steps"] = analysis_steps
+            profile["bullet_rewrites"] = bullet_rewrites
             report_id = save_report(
                 current_user["id"] if current_user else None,
                 filename,
@@ -1218,6 +1320,8 @@ def index():
                 score=total_score,
                 criteria_scores=criteria_scores,
                 score_details=score_details,
+                analysis_steps=analysis_steps,
+                bullet_rewrites=bullet_rewrites,
                 matched_jobs=matched_jobs,
                 suggestions=suggestions,
                 analysis=profile,

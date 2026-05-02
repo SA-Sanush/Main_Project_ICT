@@ -893,14 +893,18 @@ body {
 
 .feedback-grid,
 .dashboard-grid,
-.history-list {
+.history-list,
+.assistant-timeline,
+.rewrite-grid {
   display: grid;
   gap: 1rem;
 }
 
 .feedback-card,
 .metric-card,
-.history-row {
+.history-row,
+.assistant-step,
+.rewrite-card {
   padding: 1.15rem 1.2rem;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.05);
@@ -935,9 +939,45 @@ body {
 }
 
 .feedback-card p,
-.history-row p {
+.history-row p,
+.assistant-step p,
+.rewrite-card p {
   color: var(--muted);
   line-height: 1.6;
+}
+
+.assistant-step {
+  position: relative;
+  padding-left: 3.25rem;
+}
+
+.assistant-step::before {
+  content: "";
+  position: absolute;
+  left: 1.15rem;
+  top: 1.25rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  box-shadow: 0 0 0 6px rgba(103, 209, 255, 0.1);
+}
+
+.assistant-step strong,
+.rewrite-card span {
+  display: block;
+  margin-bottom: 0.4rem;
+  color: var(--text);
+}
+
+.rewrite-card {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.rewrite-card span:nth-of-type(2) {
+  margin-top: 0.65rem;
+  color: var(--success);
 }
 
 .feedback-card.strength > span {
@@ -985,7 +1025,9 @@ body {
 
 .feedback-card:hover,
 .metric-card:hover,
-.history-row:hover {
+.history-row:hover,
+.assistant-step:hover,
+.rewrite-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 22px 45px rgba(0, 0, 0, 0.16);
   border-color: rgba(76, 132, 255, 0.18);
@@ -1025,7 +1067,8 @@ body {
 
 @media (min-width: 720px) {
   .feedback-grid,
-  .dashboard-grid {
+  .dashboard-grid,
+  .rewrite-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
