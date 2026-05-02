@@ -1,0 +1,11 @@
+Age: 70
+Cache-Status: "Netlify Edge"; hit
+Strict-Transport-Security: max-age=31536000
+X-Nf-Request-Id: 01KN91P6J3X2Y38Z6X7YNAF7QY
+Accept-Ranges: bytes
+Content-Length: 265144
+Cache-Control: public,max-age=0,must-revalidate
+Content-Type: text/html; charset=UTF-8
+Date: Fri, 03 Apr 2026 06:50:01 GMT
+ETag: "272273d8a12d5971b4eca9a2223eb546-ssl"
+Server: Netlify

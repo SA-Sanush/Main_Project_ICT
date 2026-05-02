@@ -1,14 +1,31 @@
-{% extends "base.html" %} {% block title %}TAS Scan Result{% endblock %} {%
-block content %}
+{% extends "base.html" %}
+{% block title %}ATS Scan Result{% endblock %}
+{% block content %}
 <main class="content-card result-card">
   <section class="score-block">
     <div class="score-pill">Total Score</div>
-    <div class="score-value">{{ score }} / 100</div>
+    <div class="score-value" data-score-value="{{ score }}">0 / 100</div>
+    {% if previous_score is not none %}
+    <div class="score-comparison {% if score >= previous_score %}positive{% else %}negative{% endif %}">
+      Previous: {{ previous_score }} to {{ score }}
+    </div>
+    {% endif %}
     <div class="file-info">Uploaded: <strong>{{ filename }}</strong></div>
+    {% if target_title %}
+    <div class="file-info">Target role: <strong>{{ target_title }}</strong></div>
+    {% endif %}
   </section>
+
   <section class="chart-block">
-    <img src="{{ chart_url }}" alt="Resume score chart" />
+    <canvas
+      id="criteriaChart"
+      aria-label="Resume score chart"
+      role="img"
+      data-labels='{{ criteria_scores.keys() | list | tojson }}'
+      data-values='{{ criteria_scores.values() | list | tojson }}'
+    ></canvas>
   </section>
+
   <section class="criteria-block">
     <h2>Criteria Breakdown</h2>
     <div class="criteria-grid">
@@ -16,39 +33,92 @@ block content %}
       <div class="criteria-card">
         <strong>{{ name }}</strong>
         <span>{{ value }} / 10</span>
+        {% if score_details and score_details.get(name) %}
+        <p>{{ score_details.get(name) }}</p>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
   </section>
+
+  <section class="criteria-block">
+    <h2>Resume Insights</h2>
+    <div class="criteria-grid">
+      <div class="criteria-card">
+        <strong>Extracted Skills</strong>
+        <span>{{ analysis.skills | join(", ") if analysis.skills else "None detected" }}</span>
+      </div>
+      <div class="criteria-card">
+        <strong>Experience</strong>
+        <span>{{ analysis.experience_years or 0 }} year estimate</span>
+      </div>
+      <div class="criteria-card">
+        <strong>Action Verbs</strong>
+        <span>{{ analysis.action_verbs | join(", ") if analysis.action_verbs else "Needs stronger verbs" }}</span>
+      </div>
+      <div class="criteria-card">
+        <strong>Word Count</strong>
+        <span>{{ analysis.word_count or 0 }}</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="jobs-block">
+    <h2>Resume Improvement Suggestions</h2>
+    {% if suggestions %}
+    <div class="feedback-grid">
+      {% for suggestion in suggestions %}
+      <article class="feedback-card suggestion">
+        <span aria-hidden="true">OK</span>
+        <p>{{ suggestion }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No major improvement suggestions were generated for this scan.</p>
+    {% endif %}
+  </section>
+
   <section class="jobs-block">
     <h2>Recommended Jobs</h2>
     {% if matched_jobs %}
     <div class="jobs-grid">
       {% for job in matched_jobs %}
-      <article class="job-card">
+      <article class="job-card {% if job.source == 'target' %}target-job-card{% endif %}">
         <h3>{{ job.title }}</h3>
+        {% if job.source == 'target' %}
+        <span class="match-score">Target role comparison</span>
+        {% endif %}
         <p>{{ job.description }}</p>
         <span class="match-score">Match: {{ job.match_score }}%</span>
+        <div class="match-bar" aria-hidden="true"><span style="width: {{ job.match_score }}%"></span></div>
         <div class="keyword-list">
-          Keywords: {{ job.matched_keywords | join(", ") }}
+          Matched:
+          {% for keyword in job.matched_keywords %}
+          <span class="keyword-chip">{{ keyword }}</span>
+          {% else %}
+          None yet
+          {% endfor %}
         </div>
+        {% if job.missing_keywords %}
+        <div class="keyword-list">
+          Missing: {{ job.missing_keywords | join(", ") }}
+        </div>
+        {% endif %}
       </article>
       {% endfor %}
     </div>
     {% else %}
-    <p class="empty-state">
-      No strong job matches found yet. Try a more focused resume or add industry
-      keywords.
-    </p>
+    <p class="empty-state">No strong job matches found yet. Try a more focused resume or add industry keywords.</p>
     {% endif %}
   </section>
+
   <div class="actions-row">
-    <a class="secondary-button" href="{{ url_for('index') }}"
-      >Upload Another Resume</a
-    >
-    <a class="secondary-button" href="{{ url_for('history') }}"
-      >View Scan History</a
-    >
+    <a class="secondary-button" href="{{ url_for('index') }}">Upload Another Resume</a>
+    <a class="secondary-button" href="{{ url_for('history') }}">View Scan History</a>
+    {% if report_id and session.user %}
+    <a class="secondary-button" href="{{ url_for('export_report_pdf', report_id=report_id) }}">Download PDF</a>
+    {% endif %}
   </div>
 </main>
 {% endblock %}

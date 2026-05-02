@@ -1,10 +1,11 @@
-{% extends "base.html" %} {% block title %}Register | TAS Resume Scanner{% endblock
+{% extends "base.html" %} {% block title %}Register | ATS Resume Scanner{% endblock
 %} {% block content %}
 <main class="content-card">
   <section class="upload-panel">
     <h2>Create Account</h2>
     <p class="note">Register a new account, then sign in to access protected features.</p>
-    <form method="post" class="auth-form">
+    <form method="post" class="auth-form" data-auth-form novalidate>
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
       <label>
         Username
         <input
@@ -13,7 +14,9 @@
           placeholder="Choose a username"
           minlength="3"
           required
+          data-validate="username"
         />
+        <span class="field-message" data-message-for="username"></span>
       </label>
       <label>
         Password
@@ -24,7 +27,10 @@
           placeholder="At least 8 characters"
           minlength="8"
           required
+          data-validate="password"
         />
+        <span class="password-strength" aria-hidden="true"><span data-strength-bar></span></span>
+        <span class="field-message" data-message-for="password"></span>
       </label>
       <label>
         Confirm Password
@@ -35,7 +41,9 @@
           placeholder="Re-enter your password"
           minlength="8"
           required
+          data-validate="confirm"
         />
+        <span class="field-message" data-message-for="confirm_password"></span>
       </label>
       <label class="password-toggle">
         <input

@@ -1,4 +1,4 @@
-{% extends "base.html" %} {% block title %}Contact Us | TAS Resume Scanner{%
+{% extends "base.html" %} {% block title %}Contact Us | ATS Resume Scanner{%
 endblock %} {% block content %}
 <main class="content-card contact-card">
   <section class="upload-panel contact-panel">
@@ -6,10 +6,11 @@ endblock %} {% block content %}
       <span class="eyebrow">Let's Connect</span>
       <h2>Contact Us</h2>
       <p class="note">
-        Send us feedback or ask for support about your TAS resume scan.
+        Send us feedback or ask for support about your ATS resume scan.
       </p>
     </div>
     <form method="post" class="contact-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
       <label>
         Name
         <input type="text" name="name" placeholder="Your name" required />

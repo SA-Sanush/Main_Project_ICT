@@ -1,33 +1,64 @@
-{% extends "base.html" %} {% block title %}Scan History{% endblock %} {% block
+{% extends "base.html" %} {% block title %}Scan Dashboard{% endblock %} {% block
 content %}
 <main class="content-card result-card">
   <header class="hero result-hero">
     <div>
-      <h1>Resume Scan History</h1>
-      <p>Review your recent resume uploads, scores, and job match summaries.</p>
+      <h1>Resume Dashboard</h1>
+      <p>Track scan quality, score movement, and recent recommendations.</p>
     </div>
   </header>
+
+  <section class="dashboard-grid">
+    <article class="metric-card">
+      <span>Total Scans</span>
+      <strong>{{ dashboard.total_scans }}</strong>
+    </article>
+    <article class="metric-card">
+      <span>Average Score</span>
+      <strong>{{ dashboard.average_score }}/100</strong>
+    </article>
+    <article class="metric-card">
+      <span>Best Score</span>
+      <strong>{{ dashboard.best_score }}/100</strong>
+    </article>
+  </section>
+
   {% if rows %}
-  <div class="criteria-block">
+  <section class="chart-block">
+    <h2>Score Trend</h2>
+    <canvas
+      id="historyTrendChart"
+      aria-label="Resume score trend chart"
+      role="img"
+      data-labels='{{ dashboard.trend_labels | tojson }}'
+      data-values='{{ dashboard.trend_scores | tojson }}'
+    ></canvas>
+  </section>
+
+  <section class="criteria-block">
     <h2>Recent Uploads</h2>
-    <div class="jobs-grid">
+    <div class="history-list">
       {% for row in rows %}
-      <article class="job-card">
-        <h3>{{ row.filename }}</h3>
-        <p>Scored <strong>{{ row.score }}/100</strong> on {{ row.uploaded_at }}</p>
-        <p>Recommended jobs: {{ row.matched_jobs_summary }}</p>
-        <div class="actions-row">
-          <a
-            class="secondary-button"
-            href="{{ url_for('history_detail', report_id=row.id) }}"
-          >
-            Open Report
-          </a>
+      <article class="history-row">
+        <div>
+          <h3>{{ row.filename }}</h3>
+          <p>{{ row.uploaded_at }}</p>
+          <p>Recommended jobs: {{ row.matched_jobs_summary }}</p>
         </div>
+        <div class="history-score">
+          <strong>{{ row.score }}</strong>
+          <span>/100</span>
+        </div>
+        <a
+          class="secondary-button"
+          href="{{ url_for('history_detail', report_id=row.id) }}"
+        >
+          Open Report
+        </a>
       </article>
       {% endfor %}
     </div>
-  </div>
+  </section>
   {% else %}
   <p class="empty-state">
     No previous scans yet. Upload a resume to see your first result.

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+uploads/
+ats_reports.db
+static/images/score_chart.png
+
+.env
+.pytest_cache/
+.pytest_tmp/
+test_runtime/
+pytest-cache-files-*/
+htmlcov/

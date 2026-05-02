@@ -1,32 +1,53 @@
-{% extends "base.html" %} {% block title %}Resume TAS Scanner{% endblock %} {%
-block content %}
+{% extends "base.html" %}
+{% block title %}Resume ATS Scanner{% endblock %}
+{% block content %}
 <main class="content-card">
   <section class="upload-panel">
     <h2>Upload Resume</h2>
     <p class="note">
-      Upload your resume and get a professional TAS match score, criteria
-      breakdown, and tailored job recommendations.
+      Upload your resume and get an ATS match score, criteria breakdown, and tailored job recommendations.
     </p>
-    <form method="post" enctype="multipart/form-data" id="resume-form">
-      <label class="file-label" for="resume_file">
-        <span>Choose a PDF or TXT resume file</span>
+    <form method="post" enctype="multipart/form-data" id="resume-form" novalidate>
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+      <label class="file-label drop-zone" for="resume_file" data-drop-zone>
+        <span class="upload-icon" aria-hidden="true">&uarr;</span>
+        <span class="upload-title">Drop your resume here</span>
+        <span class="upload-subtitle">PDF, DOCX, or TXT up to 10 MB</span>
         <input
           id="resume_file"
           type="file"
           name="resume_file"
-          accept=".pdf,.txt"
+          accept=".pdf,.docx,.txt"
           required
         />
       </label>
-      <div class="hint">
-        We recommend PDF format for best TAS compatibility.
+      <div class="file-meta" data-file-meta hidden>
+        <span data-file-name></span>
+        <span data-file-size></span>
+      </div>
+      <p class="inline-error" data-file-error hidden>Please choose a PDF, DOCX, or TXT resume before scanning.</p>
+      <div class="target-role-fields">
+        <label>
+          Target job title
+          <input type="text" name="job_title" placeholder="Example: Data Analyst" />
+        </label>
+        <label>
+          Target job description
+          <textarea
+            name="job_description"
+            rows="5"
+            placeholder="Paste a job description to get a tailored relevance score"
+          ></textarea>
+        </label>
+      </div>
+      <div class="scan-progress" data-scan-progress hidden>
+        <div class="progress-track"><span data-progress-bar></span></div>
+        <p data-loading-message>Uploading...</p>
       </div>
       <button type="submit" class="primary-button">Scan Resume</button>
     </form>
     <p class="note">
-      Your resume will be analyzed for contact information, summary, experience,
-      education, skills, TAS optimization, consistency, proofreading, format,
-      and relevance.
+      Resumes are parsed from temporary uploads, analyzed, and then removed from local upload storage.
     </p>
   </section>
 </main>

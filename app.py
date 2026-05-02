@@ -2,39 +2,75 @@ import os
 import re
 import csv
 import json
+import math
 import sqlite3
+import secrets
 import traceback
+import uuid
 from ast import literal_eval
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timezone
 from functools import wraps
+from io import BytesIO
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort, Response
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
-from PyPDF2 import PdfReader
+
+try:
+    from pypdf import PdfReader
+except ImportError:  # Backward-compatible fallback for older local environments.
+    from PyPDF2 import PdfReader
+
+try:
+    import spacy
+except ImportError:  # Optional: app still works with the local rule fallback.
+    spacy = None
+
+try:
+    from docx import Document
+except ImportError:  # Optional until python-docx is installed.
+    Document = None
+
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+except ImportError:  # OCR is optional because it needs native Poppler/Tesseract binaries.
+    pytesseract = None
+    convert_from_path = None
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = BASE_DIR / "uploads"
 CHART_FOLDER = BASE_DIR / "static" / "images"
 JOB_DATA_PATH = BASE_DIR / "job_data.csv"
 DB_PATH = BASE_DIR / "ats_reports.db"
-ALLOWED_EXTENSIONS = {"pdf", "txt"}
+ALLOWED_EXTENSIONS = {"pdf", "txt", "docx"}
+RATE_LIMITS: dict[tuple[str, str], list[float]] = {}
 
 app = Flask(__name__)
-app.secret_key = "ats_secret_key_2026"
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_FOLDER)
 app.config["CHART_FOLDER"] = str(CHART_FOLDER)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
+app.config["CSRF_ENABLED"] = os.environ.get("DISABLE_CSRF") != "1"
+app.config["ADMIN_USERNAME"] = os.environ.get("ADMIN_USERNAME", "admin")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("FLASK_ENV") == "production",
+)
 
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 CHART_FOLDER.mkdir(parents=True, exist_ok=True)
 
 CONTACT_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|\+?\d[\d\s().-]{6,}\d")
+EMAIL_PATTERN = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
+MAX_TEXT_INPUT_LENGTH = 5000
+MAX_CATALOG_FIELD_LENGTH = 800
 
 COMMON_TYPO = ["teh", "recieve", "acheive", "managment", "objecive", "formaing", "resposible", "seperated"]
 
@@ -43,6 +79,66 @@ JOB_KEYWORDS = [
     "data analysis", "teamwork", "project", "documentation", "presentation", "analytics",
     "stakeholders", "roadmap", "testing", "bug", "portfolio", "linkedin"
 ]
+
+ACTION_VERBS = [
+    "achieved", "analyzed", "automated", "built", "created", "delivered", "designed",
+    "developed", "improved", "increased", "launched", "led", "managed", "optimized",
+    "reduced", "shipped", "streamlined"
+]
+
+WEAK_VERBS = ["helped", "worked on", "responsible for", "handled", "assisted", "participated"]
+
+SKILL_SYNONYMS = {
+    "python": ["python", "py"],
+    "sql": ["sql", "mysql", "postgresql", "postgres", "sqlite", "database"],
+    "excel": ["excel", "spreadsheets", "vlookup", "pivot table"],
+    "data visualization": ["data visualization", "tableau", "power bi", "matplotlib", "seaborn", "dashboard"],
+    "machine learning": ["machine learning", "ml", "scikit-learn", "sklearn", "modeling", "predictive"],
+    "nlp": ["nlp", "natural language processing", "spacy", "bert", "transformers"],
+    "flask": ["flask", "web api", "rest api"],
+    "javascript": ["javascript", "js", "typescript", "react", "node"],
+    "communication": ["communication", "presentation", "stakeholder", "stakeholders", "collaboration"],
+    "leadership": ["leadership", "led", "managed", "mentored", "ownership"],
+    "testing": ["testing", "pytest", "unit test", "qa", "automation"],
+}
+
+ROLE_KEYWORD_HINTS = {
+    "full stack developer": [
+        "javascript", "react", "node", "python", "flask", "sql", "git", "testing",
+        "api", "html", "css"
+    ],
+    "frontend developer": ["javascript", "react", "typescript", "html", "css", "testing", "git"],
+    "front end developer": ["javascript", "react", "typescript", "html", "css", "testing", "git"],
+    "backend developer": ["python", "flask", "sql", "api", "testing", "git"],
+    "back end developer": ["python", "flask", "sql", "api", "testing", "git"],
+    "software engineer": ["python", "javascript", "sql", "git", "testing", "code review", "api"],
+    "web developer": ["javascript", "html", "css", "react", "api", "git", "testing"],
+    "data analyst": ["python", "sql", "excel", "data visualization", "analytics", "reporting"],
+}
+
+LOW_SIGNAL_ROLE_WORDS = {
+    "role", "job", "candidate", "skills", "skill", "developer", "engineer", "full",
+    "stack", "front", "frontend", "backend", "back", "end", "web", "software",
+    "senior", "junior", "lead", "manager", "specialist", "analyst"
+}
+
+SCORING_WEIGHTS = {
+    "Contact Information": 0.08,
+    "Professional Summary": 0.10,
+    "Work Experience": 0.18,
+    "Education": 0.10,
+    "Skills": 0.20,
+    "ATS Optimization": 0.14,
+    "Consistency": 0.07,
+    "Proofreading": 0.06,
+    "File Format": 0.04,
+    "Relevance": 0.03,
+}
+
+try:
+    NLP = spacy.load(os.environ.get("SPACY_MODEL", "en_core_web_sm")) if spacy else None
+except OSError:
+    NLP = spacy.blank("en") if spacy else None
 
 DEFAULT_JOBS = [
     {
@@ -84,7 +180,9 @@ def init_db() -> None:
             "uploaded_at TEXT,"
             "score INTEGER,"
             "matched_jobs TEXT,"
-            "criteria TEXT"
+            "criteria TEXT,"
+            "suggestions TEXT,"
+            "analysis TEXT"
             ")"
         )
         conn.execute(
@@ -106,6 +204,7 @@ def init_db() -> None:
         )
         conn.commit()
         create_default_user(conn)
+        ensure_report_columns(conn)
         ensure_reports_user_scope(conn)
         assign_legacy_reports_to_default_user(conn)
     finally:
@@ -191,6 +290,92 @@ def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
+def file_signature_matches(path: Path, extension: str) -> bool:
+    try:
+        header = path.read_bytes()[:8]
+    except OSError:
+        return False
+    if extension == "pdf":
+        return header.startswith(b"%PDF-")
+    if extension == "docx":
+        return header.startswith(b"PK\x03\x04")
+    if extension == "txt":
+        return b"\x00" not in header
+    return False
+
+
+def compact_reason(reason: str, limit: int = 150) -> str:
+    reason = re.sub(r"\s+", " ", reason).strip()
+    return reason if len(reason) <= limit else f"{reason[: limit - 3].rstrip()}..."
+
+
+def count_bullet_markers(text: str) -> int:
+    return text.count("- ") + text.count("\u2022") + text.count("* ")
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def utc_timestamp() -> str:
+    return utc_now().isoformat(timespec="seconds")
+
+
+def client_key() -> str:
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "local").split(",")[0].strip()
+
+
+def rate_limit(limit: int, seconds: int):
+    def decorator(view_func):
+        @wraps(view_func)
+        def wrapped(*args, **kwargs):
+            if request.method == "GET":
+                return view_func(*args, **kwargs)
+            now = utc_now().timestamp()
+            key = (view_func.__name__, client_key())
+            recent = [stamp for stamp in RATE_LIMITS.get(key, []) if now - stamp < seconds]
+            if len(recent) >= limit:
+                flash("Too many attempts. Please wait a moment and try again.", "error")
+                return redirect(request.referrer or url_for("index"))
+            recent.append(now)
+            RATE_LIMITS[key] = recent
+            return view_func(*args, **kwargs)
+        return wrapped
+    return decorator
+
+
+def csrf_token() -> str:
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["_csrf_token"] = token
+    return token
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": csrf_token}
+
+
+@app.before_request
+def protect_from_csrf() -> None:
+    if not app.config.get("CSRF_ENABLED", True) or request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return
+    session_token = session.get("_csrf_token")
+    form_token = request.form.get("_csrf_token") or request.headers.get("X-CSRF-Token")
+    if not session_token or not form_token or not secrets.compare_digest(session_token, form_token):
+        abort(400)
+
+
+def save_upload_temporarily(uploaded_file, original_filename: str, user_id: int | None) -> Path:
+    extension = original_filename.rsplit(".", 1)[1].lower()
+    user_folder = UPLOAD_FOLDER / (str(user_id) if user_id else "anonymous")
+    user_folder.mkdir(parents=True, exist_ok=True)
+    save_path = user_folder / f"{uuid.uuid4().hex}.{extension}"
+    uploaded_file.save(save_path)
+    return save_path
+
+
 def extract_text_from_pdf(path: Path) -> str:
     text_parts = []
     try:
@@ -202,8 +387,82 @@ def extract_text_from_pdf(path: Path) -> str:
     return "\n".join(text_parts)
 
 
+def extract_text_with_ocr(path: Path) -> str:
+    if pytesseract is None or convert_from_path is None:
+        return ""
+    try:
+        images = convert_from_path(str(path), dpi=180, first_page=1, last_page=5)
+        return "\n".join(pytesseract.image_to_string(image) for image in images)
+    except Exception:
+        return ""
+
+
+def extract_text_from_docx(path: Path) -> str:
+    if Document is None:
+        raise RuntimeError("DOCX support requires python-docx. Install it with: pip install python-docx")
+    document = Document(str(path))
+    parts = [paragraph.text for paragraph in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            parts.extend(cell.text for cell in row.cells)
+    return "\n".join(parts)
+
+
+def extract_resume_text(path: Path, extension: str) -> str:
+    if extension == "pdf":
+        text = extract_text_from_pdf(path)
+        return text if text.strip() else extract_text_with_ocr(path)
+    if extension == "docx":
+        return extract_text_from_docx(path)
+    return path.read_text(encoding="utf-8", errors="ignore")
+
+
 def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip()).lower()
+
+
+def extract_resume_profile(raw_text: str) -> dict:
+    text = normalize_text(raw_text)
+    doc = NLP(raw_text) if NLP else None
+    entities = []
+    if doc and hasattr(doc, "ents"):
+        entities = [
+            {"text": ent.text, "label": ent.label_}
+            for ent in doc.ents
+            if ent.label_ in {"ORG", "PERSON", "GPE", "DATE", "PRODUCT", "NORP"}
+        ][:20]
+
+    skills = []
+    for canonical, aliases in SKILL_SYNONYMS.items():
+        if any(alias in text for alias in aliases):
+            skills.append(canonical)
+
+    years = [int(match.group(0)) for match in YEAR_PATTERN.finditer(text)]
+    current_year = utc_now().year
+    plausible_years = [year for year in years if 1970 <= year <= current_year]
+    experience_years = 0
+    explicit_exp = re.search(r"\b(\d{1,2})\+?\s*(?:years|yrs)\b", text)
+    if explicit_exp:
+        experience_years = int(explicit_exp.group(1))
+    elif len(plausible_years) >= 2:
+        experience_years = max(0, min(current_year - min(plausible_years), 25))
+
+    action_verb_hits = sorted({verb for verb in ACTION_VERBS if re.search(rf"\b{re.escape(verb)}\b", text)})
+    weak_verb_hits = sorted({verb for verb in WEAK_VERBS if verb in text})
+    education = sorted({
+        word for word in ["bachelor", "master", "phd", "degree", "university", "college", "diploma"]
+        if word in text
+    })
+
+    return {
+        "skills": skills,
+        "entities": entities,
+        "experience_years": experience_years,
+        "action_verbs": action_verb_hits,
+        "weak_verbs": weak_verb_hits,
+        "education": education,
+        "word_count": len(re.findall(r"\b\w+\b", text)),
+    }
 
 
 def detect_contact_info(text: str) -> int:
@@ -215,15 +474,42 @@ def detect_contact_info(text: str) -> int:
     return min(score, 10)
 
 
+def explain_contact_info(text: str, score: int) -> str:
+    has_contact = bool(CONTACT_PATTERN.search(text))
+    has_profile_link = "linkedin.com" in text or "portfolio" in text or "github.com" in text
+    if has_contact and has_profile_link:
+        return "Found direct contact details plus a portfolio, LinkedIn, or GitHub signal."
+    if has_contact:
+        return "Found email or phone details; add LinkedIn, GitHub, or portfolio when relevant."
+    if has_profile_link:
+        return "Found a profile link, but no clear email or phone number was detected."
+    return "No clear email, phone, LinkedIn, GitHub, or portfolio signal was detected."
+
+
 def detect_summary(text: str) -> int:
     markers = ["summary", "objective", "experience", "achievements", "years of experience", "result-oriented"]
     hits = sum(1 for marker in markers if marker in text)
     return min(10, max(0, hits * 2))
 
 
-def detect_experience(text: str) -> int:
-    bullets = text.count("- ") + text.count("•") + text.count("* ")
+def explain_summary(text: str, score: int) -> str:
+    markers = ["summary", "objective", "achievements", "years of experience", "result-oriented"]
+    found = [marker for marker in markers if marker in text]
+    if score >= 7:
+        return f"Detected summary-style signals: {', '.join(found[:4])}."
+    if found:
+        return f"Found some summary signals ({', '.join(found[:3])}), but the section could be clearer."
+    return "No strong professional summary or objective section was detected."
+
+
+def detect_experience(text: str, profile: dict | None = None) -> int:
+    bullets = count_bullet_markers(text)
     role_keywords = len(re.findall(r"\b(?:managed|led|developed|implemented|engineered|designed|built|achieved|improved|created)\b", text))
+    experience_years = (profile or {}).get("experience_years", 0)
+    if experience_years >= 5 and role_keywords >= 3:
+        return 10
+    if experience_years >= 2 and role_keywords >= 2:
+        return 8
     if bullets >= 4 and role_keywords >= 3:
         return 10
     if bullets >= 2 and role_keywords >= 2:
@@ -231,6 +517,15 @@ def detect_experience(text: str) -> int:
     if bullets >= 1 and role_keywords >= 1:
         return 6
     return 3 if "experience" in text else 0
+
+
+def explain_experience(text: str, profile: dict | None, score: int) -> str:
+    bullets = count_bullet_markers(text)
+    role_keywords = len(re.findall(r"\b(?:managed|led|developed|implemented|engineered|designed|built|achieved|improved|created)\b", text))
+    experience_years = (profile or {}).get("experience_years", 0)
+    if score >= 8:
+        return f"Detected {bullets} bullet markers, {role_keywords} impact verbs, and about {experience_years} years of experience."
+    return f"Only {bullets} bullet markers and {role_keywords} impact verbs were detected; measurable experience bullets would help."
 
 
 def detect_education(text: str) -> int:
@@ -243,11 +538,28 @@ def detect_education(text: str) -> int:
     return min(score, 10)
 
 
-def detect_skills(text: str) -> int:
-    tech_skills = ["python", "sql", "excel", "flask", "pandas", "matplotlib", "javascript", "html", "css"]
+def explain_education(text: str, score: int) -> str:
+    degree_words = ["bachelor", "master", "phd", "university", "college", "degree", "graduat", "diploma"]
+    found = [word for word in degree_words if word in text]
+    if found:
+        return f"Found education signals: {', '.join(found[:5])}."
+    return "No clear degree, school, college, university, or diploma signal was detected."
+
+
+def detect_skills(text: str, profile: dict | None = None) -> int:
+    extracted = set((profile or {}).get("skills", []))
+    tech_skills = ["python", "sql", "excel", "flask", "data visualization", "javascript", "machine learning", "nlp", "testing"]
     soft_skills = ["communication", "teamwork", "problem solving", "leadership", "adaptability", "collaboration", "organization"]
-    found = sum(1 for skill in tech_skills + soft_skills if skill in text)
+    found = len(extracted)
+    found += sum(1 for skill in tech_skills + soft_skills if skill in text and skill not in extracted)
     return min(10, found * 2)
+
+
+def explain_skills(text: str, profile: dict | None, score: int) -> str:
+    skills = (profile or {}).get("skills", [])
+    if skills:
+        return f"Detected explicit skills such as {', '.join(skills[:6])}."
+    return "No canonical skill names from the current skill dictionary were detected."
 
 
 def detect_ats_optimization(text: str) -> int:
@@ -255,11 +567,24 @@ def detect_ats_optimization(text: str) -> int:
     return min(10, hits * 2)
 
 
+def explain_ats_optimization(text: str, score: int) -> str:
+    found = [keyword for keyword in JOB_KEYWORDS if keyword in text]
+    if found:
+        return f"Matched ATS-friendly terms: {', '.join(found[:6])}."
+    return "Few general ATS-friendly keywords were found in the resume text."
+
+
 def detect_consistency(text: str) -> int:
     date_formats = re.findall(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4})\b", text)
-    bullets = text.count("- ") + text.count("•") + text.count("* ")
+    bullets = count_bullet_markers(text)
     pattern = 10 if bullets >= 3 and len(date_formats) >= 2 else 6 if bullets >= 2 else 4
     return pattern
+
+
+def explain_consistency(text: str, score: int) -> str:
+    date_formats = re.findall(r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4})\b", text)
+    bullets = count_bullet_markers(text)
+    return f"Detected {bullets} bullet markers and {len(date_formats)} date markers."
 
 
 def detect_proofreading(text: str) -> int:
@@ -269,7 +594,23 @@ def detect_proofreading(text: str) -> int:
     return max(0, score)
 
 
-def detect_relevance(text: str) -> int:
+def explain_proofreading(text: str, score: int) -> str:
+    typos = [mistake for mistake in COMMON_TYPO if mistake in text]
+    punctuation_issues = len(re.findall(r"\s{2,}", text))
+    if not typos and not punctuation_issues:
+        return "No common typo or spacing issues from the local checker were detected."
+    issues = []
+    if typos:
+        issues.append(f"possible typos: {', '.join(typos[:4])}")
+    if punctuation_issues:
+        issues.append(f"{punctuation_issues} spacing issue(s)")
+    return compact_reason("; ".join(issues))
+
+
+def detect_relevance(text: str, target_text: str = "") -> int:
+    if target_text:
+        similarity = cosine_similarity(tokenize_for_similarity(text), tokenize_for_similarity(target_text))
+        return int(np.clip(round(similarity * 18), 0, 10))
     if "high school" in text and any(word in text for word in ["bachelor", "master", "university", "college"]):
         return 6
     if "high school" in text and "degree" not in text:
@@ -277,71 +618,237 @@ def detect_relevance(text: str) -> int:
     return 10
 
 
-def build_criteria_scores(text: str, extension: str) -> dict:
+def explain_relevance(text: str, target_text: str, score: int) -> str:
+    if target_text:
+        similarity = cosine_similarity(tokenize_for_similarity(text), tokenize_for_similarity(target_text))
+        return f"Target role similarity is {round(similarity * 100)}% using weighted term overlap."
+    return "No target job description was supplied, so relevance used general resume completeness signals."
+
+
+def build_criteria_scores(text: str, extension: str, profile: dict | None = None, target_text: str = "") -> dict:
     criteria_scores = {
         "Contact Information": detect_contact_info(text),
         "Professional Summary": detect_summary(text),
-        "Work Experience": detect_experience(text),
+        "Work Experience": detect_experience(text, profile),
         "Education": detect_education(text),
-        "Skills": detect_skills(text),
+        "Skills": detect_skills(text, profile),
         "ATS Optimization": detect_ats_optimization(text),
         "Consistency": detect_consistency(text),
         "Proofreading": detect_proofreading(text),
-        "File Format": 10 if extension.lower() == "pdf" else 0,
-        "Relevance": detect_relevance(text),
+        "File Format": 10 if extension.lower() in {"pdf", "docx"} else 7,
+        "Relevance": detect_relevance(text, target_text),
     }
     return criteria_scores
 
 
-def generate_chart(criteria_scores: dict, output_path: Path) -> None:
-    categories = list(criteria_scores.keys())
-    values = np.array(list(criteria_scores.values()))
-    fig, ax = plt.subplots(figsize=(9, 4.5), constrained_layout=True)
-    bars = ax.barh(categories, values, color=["#4C84FF" if v >= 7 else "#FCA311" for v in values])
-    ax.set_xlim(0, 10)
-    ax.set_xlabel("Score per Criterion")
-    ax.set_title("Resume ATS Criteria Match Breakdown")
-    ax.invert_yaxis()
-    for bar, value in zip(bars, values):
-        ax.text(value + 0.2, bar.get_y() + bar.get_height() / 2, f"{int(value)}/10", va="center", fontsize=9)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
+def build_score_details(criteria_scores: dict, text: str, extension: str, profile: dict | None = None, target_text: str = "") -> dict:
+    explainers = {
+        "Contact Information": explain_contact_info(text, criteria_scores.get("Contact Information", 0)),
+        "Professional Summary": explain_summary(text, criteria_scores.get("Professional Summary", 0)),
+        "Work Experience": explain_experience(text, profile, criteria_scores.get("Work Experience", 0)),
+        "Education": explain_education(text, criteria_scores.get("Education", 0)),
+        "Skills": explain_skills(text, profile, criteria_scores.get("Skills", 0)),
+        "ATS Optimization": explain_ats_optimization(text, criteria_scores.get("ATS Optimization", 0)),
+        "Consistency": explain_consistency(text, criteria_scores.get("Consistency", 0)),
+        "Proofreading": explain_proofreading(text, criteria_scores.get("Proofreading", 0)),
+        "File Format": f"{extension.upper()} is {'a preferred ATS format' if extension.lower() in {'pdf', 'docx'} else 'accepted but less formatting-stable than PDF or DOCX'}.",
+        "Relevance": explain_relevance(text, target_text, criteria_scores.get("Relevance", 0)),
+    }
+    return {name: compact_reason(reason) for name, reason in explainers.items()}
 
 
-def find_applicable_jobs(text: str) -> list:
+def calculate_weighted_score(criteria_scores: dict) -> int:
+    weighted = sum(criteria_scores[name] * SCORING_WEIGHTS.get(name, 0.0) for name in criteria_scores)
+    return int(np.clip(round(weighted * 10), 0, 100))
+
+
+def text_contains_alias(text: str, alias: str) -> bool:
+    return re.search(rf"(?<![a-z0-9+#.-]){re.escape(alias)}(?![a-z0-9+#.-])", text) is not None
+
+
+def tokenize_for_similarity(text: str) -> list[str]:
+    tokens = re.findall(r"\b[a-zA-Z][a-zA-Z+#.-]{1,}\b", normalize_text(text))
+    stop_words = {
+        "and", "the", "for", "with", "from", "that", "this", "into", "your", "you",
+        "are", "will", "have", "has", "our", "resume", "experience", "work"
+    }
+    expanded = [token for token in tokens if token not in stop_words]
+    normalized = normalize_text(text)
+    for canonical, aliases in SKILL_SYNONYMS.items():
+        if any(text_contains_alias(normalized, alias) for alias in aliases):
+            expanded.extend(canonical.split())
+    return expanded
+
+
+def build_weighted_terms(text: str) -> Counter:
+    tokens = tokenize_for_similarity(text)
+    counts = Counter(tokens)
+    normalized = normalize_text(text)
+    for canonical, aliases in SKILL_SYNONYMS.items():
+        if any(text_contains_alias(normalized, alias) for alias in aliases):
+            counts[canonical] += 3
+    for phrase in re.findall(r"\b(?:required|must have|proficient in|experience with|responsible for)\s+([^.;:\n]+)", normalized):
+        for token in tokenize_for_similarity(phrase):
+            counts[token] += 2
+    return counts
+
+
+def infer_role_keywords(title: str) -> list[str]:
+    normalized_title = normalize_text(title)
+    inferred: list[str] = []
+    for role, keywords in ROLE_KEYWORD_HINTS.items():
+        if role in normalized_title:
+            inferred.extend(keywords)
+    return list(dict.fromkeys(inferred))
+
+
+def keyword_found_in_text(keyword: str, normalized_text: str) -> bool:
+    aliases = SKILL_SYNONYMS.get(keyword, [keyword])
+    return any(text_contains_alias(normalized_text, alias) for alias in aliases)
+
+
+def weighted_cosine_similarity(left: Counter, right: Counter) -> float:
+    if not left or not right:
+        return 0.0
+    shared = set(left) & set(right)
+    numerator = sum(left[token] * right[token] for token in shared)
+    left_norm = math.sqrt(sum(value * value for value in left.values()))
+    right_norm = math.sqrt(sum(value * value for value in right.values()))
+    return numerator / (left_norm * right_norm) if left_norm and right_norm else 0.0
+
+
+def cosine_similarity(left_tokens: list[str], right_tokens: list[str]) -> float:
+    left = Counter(left_tokens)
+    right = Counter(right_tokens)
+    if not left or not right:
+        return 0.0
+    shared = set(left) & set(right)
+    numerator = sum(left[token] * right[token] for token in shared)
+    left_norm = math.sqrt(sum(value * value for value in left.values()))
+    right_norm = math.sqrt(sum(value * value for value in right.values()))
+    return numerator / (left_norm * right_norm) if left_norm and right_norm else 0.0
+
+
+def build_target_job_match(text: str, title: str, description: str) -> dict | None:
+    target_text = f"{title} {description}".strip()
+    if not target_text:
+        return None
+    inferred_keywords = infer_role_keywords(title)
+    expanded_target_text = f"{target_text} {' '.join(inferred_keywords)}".strip()
+    resume_terms = build_weighted_terms(text)
+    target_counter = build_weighted_terms(expanded_target_text)
+    candidate_keywords = [
+        token for token, _ in target_counter.most_common()
+        if len(token) > 2 and token not in LOW_SIGNAL_ROLE_WORDS
+    ][:18]
+    normalized_resume = normalize_text(text)
+    matched_keywords = [keyword for keyword in candidate_keywords if keyword_found_in_text(keyword, normalized_resume)]
+    missing_keywords = [
+        keyword for keyword in candidate_keywords
+        if not keyword_found_in_text(keyword, normalized_resume)
+    ][:8]
+    similarity = weighted_cosine_similarity(resume_terms, target_counter)
+    coverage = len(matched_keywords) / max(len(candidate_keywords), 1)
+    match_score = (similarity * 0.6) + (coverage * 0.4)
+    return {
+        "title": title or "Target Role",
+        "description": description,
+        "match_score": int(np.clip(round(match_score * 100), 0, 100)),
+        "matched_keywords": matched_keywords[:10],
+        "missing_keywords": missing_keywords,
+        "source": "target",
+        "explanation": f"Matched {len(matched_keywords)} of {len(candidate_keywords)} high-signal target terms.",
+    }
+
+
+def find_applicable_jobs(text: str, profile: dict | None = None, target_job: dict | None = None) -> list:
     jobs_df = load_job_data()
     text_lower = text.lower()
+    resume_terms = build_weighted_terms(text)
     recommendations = []
+    if target_job:
+        recommendations.append(target_job)
     for _, row in jobs_df.iterrows():
         keywords = [kw.strip() for kw in str(row["keywords"]).split(",") if kw.strip()]
         matches = sum(1 for kw in keywords if kw in text_lower)
-        ratio = matches / max(len(keywords), 1)
-        if ratio >= 0.3:
+        keyword_ratio = matches / max(len(keywords), 1)
+        job_text = f"{row['title']} {row.get('description', '')} {' '.join(keywords)}"
+        similarity = weighted_cosine_similarity(resume_terms, build_weighted_terms(job_text))
+        combined_score = (keyword_ratio * 0.55) + (similarity * 0.45)
+        matched_keywords = [kw for kw in keywords if kw in text_lower]
+        missing_keywords = [kw for kw in keywords if kw not in text_lower][:5]
+        if combined_score >= 0.18 or matched_keywords:
             recommendations.append({
                 "title": row["title"],
                 "description": row.get("description", ""),
-                "match_score": int(ratio * 100),
-                "matched_keywords": [kw for kw in keywords if kw in text_lower]
+                "match_score": int(np.clip(round(combined_score * 100), 0, 100)),
+                "matched_keywords": matched_keywords,
+                "missing_keywords": missing_keywords,
+                "source": "catalog",
             })
-    recommendations.sort(key=lambda item: item["match_score"], reverse=True)
+    recommendations.sort(key=lambda item: (item.get("source") == "target", item["match_score"]), reverse=True)
     return recommendations[:5]
 
 
-def save_report(user_id: int | None, filename: str, score: int, matched_jobs: list, criteria_scores: dict) -> None:
+def build_resume_suggestions(criteria_scores: dict, matched_jobs: list, profile: dict, text: str) -> list[str]:
+    suggestions = []
+    skills = set(profile.get("skills", []))
+    missing_from_top_jobs = []
+    for job in matched_jobs[:3]:
+        missing_from_top_jobs.extend(job.get("missing_keywords", []))
+    most_common_missing = [skill for skill, _ in Counter(missing_from_top_jobs).most_common(5)]
+
+    if criteria_scores.get("Contact Information", 0) < 8:
+        suggestions.append("Add a clear email/phone line and include LinkedIn or GitHub when relevant.")
+    if criteria_scores.get("Professional Summary", 0) < 7:
+        suggestions.append("Add a 2-3 line professional summary tailored to the target role.")
+    if criteria_scores.get("Work Experience", 0) < 7:
+        suggestions.append("Rewrite experience bullets with impact: action verb + task + measurable outcome.")
+    if criteria_scores.get("Skills", 0) < 8 and most_common_missing:
+        suggestions.append(f"Consider adding relevant skills from matching jobs: {', '.join(most_common_missing)}.")
+    elif criteria_scores.get("Skills", 0) < 8:
+        suggestions.append("Add a dedicated skills section with tools, methods, and soft skills.")
+    if profile.get("weak_verbs"):
+        suggestions.append(f"Replace weak phrasing like {', '.join(profile['weak_verbs'][:3])} with stronger action verbs.")
+    if len(profile.get("action_verbs", [])) < 4:
+        suggestions.append("Use more accomplishment verbs such as built, improved, automated, delivered, or optimized.")
+    if profile.get("word_count", 0) < 180:
+        suggestions.append("The resume text is quite short; add project, role, education, and achievement detail.")
+    if not skills:
+        suggestions.append("Add explicit skill names so ATS systems can match your profile reliably.")
+    target_match = next((job for job in matched_jobs if job.get("source") == "target"), None)
+    if target_match and target_match.get("missing_keywords"):
+        suggestions.append(f"Tailor this resume to the target role by adding evidence for: {', '.join(target_match['missing_keywords'][:5])}.")
+    return suggestions[:6]
+
+
+def save_report(
+    user_id: int | None,
+    filename: str,
+    score: int,
+    matched_jobs: list,
+    criteria_scores: dict,
+    suggestions: list[str] | None = None,
+    analysis: dict | None = None,
+) -> int:
     conn = sqlite3.connect(DB_PATH)
     try:
-        conn.execute(
-            "INSERT INTO reports (user_id, filename, uploaded_at, score, matched_jobs, criteria) VALUES (?, ?, ?, ?, ?, ?)",
+        cursor = conn.execute(
+            "INSERT INTO reports (user_id, filename, uploaded_at, score, matched_jobs, criteria, suggestions, analysis) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id,
                 filename,
-                datetime.utcnow().isoformat(),
+                utc_timestamp(),
                 score,
                 json.dumps(matched_jobs),
                 json.dumps(criteria_scores),
+                json.dumps(suggestions or []),
+                json.dumps(analysis or {}),
             ),
         )
         conn.commit()
+        return int(cursor.lastrowid)
     finally:
         conn.close()
 
@@ -351,9 +858,26 @@ def save_contact_submission(name: str, email: str, subject: str, message: str) -
     try:
         conn.execute(
             "INSERT INTO contacts (name, email, subject, message, created_at) VALUES (?, ?, ?, ?, ?)",
-            (name, email, subject, message, datetime.utcnow().isoformat()),
+            (name, email, subject, message, utc_timestamp()),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def get_latest_score(user_id: int | None) -> int | None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        if user_id is None:
+            row = conn.execute(
+                "SELECT score FROM reports WHERE user_id IS NULL ORDER BY uploaded_at DESC LIMIT 1"
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT score FROM reports WHERE user_id = ? ORDER BY uploaded_at DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+        return row[0] if row else None
     finally:
         conn.close()
 
@@ -391,6 +915,14 @@ def create_user(username: str, password: str) -> bool:
         conn.close()
 
 
+def ensure_report_columns(conn: sqlite3.Connection) -> None:
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(reports)").fetchall()]
+    for column, column_type in {"suggestions": "TEXT", "analysis": "TEXT"}.items():
+        if column not in columns:
+            conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {column_type}")
+    conn.commit()
+
+
 def ensure_reports_user_scope(conn: sqlite3.Connection) -> None:
     columns = [row[1] for row in conn.execute("PRAGMA table_info(reports)").fetchall()]
     if "user_id" not in columns:
@@ -408,6 +940,105 @@ def assign_legacy_reports_to_default_user(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def normalize_report_payload(row) -> dict | None:
+    if not row:
+        return None
+    matched_jobs = parse_report_payload(row[4], [])
+    criteria_scores = parse_report_payload(row[5], {})
+    suggestions = parse_report_payload(row[6], [])
+    analysis = parse_report_payload(row[7], {})
+    if isinstance(matched_jobs, str):
+        matched_jobs = [{"title": title.strip()} for title in matched_jobs.split(",") if title.strip()]
+    return {
+        "report": {
+            "id": row[0],
+            "filename": row[1],
+            "uploaded_at": row[2],
+            "score": row[3],
+        },
+        "matched_jobs": matched_jobs if isinstance(matched_jobs, list) else [],
+        "criteria_scores": criteria_scores if isinstance(criteria_scores, dict) else {},
+        "suggestions": suggestions if isinstance(suggestions, list) else [],
+        "analysis": analysis if isinstance(analysis, dict) else {},
+    }
+
+
+def get_report_payload(report_id: int, user_id: int) -> dict | None:
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        accessible_user_ids = get_accessible_user_ids(conn, user_id)
+        placeholders = ", ".join(["?"] * len(accessible_user_ids))
+        row = conn.execute(
+            f"SELECT id, filename, uploaded_at, score, matched_jobs, criteria, suggestions, analysis "
+            f"FROM reports WHERE id = ? AND user_id IN ({placeholders})",
+            (report_id, *accessible_user_ids),
+        ).fetchone()
+    finally:
+        conn.close()
+    return normalize_report_payload(row)
+
+
+def escape_pdf_text(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def build_simple_pdf(lines: list[str]) -> bytes:
+    content = ["BT", "/F1 12 Tf", "50 780 Td", "16 TL"]
+    for line in lines[:42]:
+        content.append(f"({escape_pdf_text(line[:95])}) Tj")
+        content.append("T*")
+    content.append("ET")
+    stream = "\n".join(content).encode("latin-1", errors="replace")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream",
+    ]
+    output = BytesIO()
+    output.write(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(output.tell())
+        output.write(f"{index} 0 obj\n".encode("ascii"))
+        output.write(obj)
+        output.write(b"\nendobj\n")
+    xref = output.tell()
+    output.write(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    output.write(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        output.write(f"{offset:010d} 00000 n \n".encode("ascii"))
+    output.write(f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode("ascii"))
+    return output.getvalue()
+
+
+def report_lines(payload: dict) -> list[str]:
+    report = payload["report"]
+    score_details = payload.get("analysis", {}).get("score_details", {})
+    lines = [
+        "ATS Resume Scanner Report",
+        f"File: {report['filename']}",
+        f"Saved: {report['uploaded_at']}",
+        f"Score: {report['score']} / 100",
+        "",
+        "Criteria",
+    ]
+    for name, value in payload["criteria_scores"].items():
+        lines.append(f"- {name}: {value}/10")
+        if score_details.get(name):
+            lines.append(f"  {score_details[name]}")
+    lines.append("")
+    lines.append("Suggestions")
+    lines.extend(f"- {suggestion}" for suggestion in payload["suggestions"] or ["No suggestions saved."])
+    lines.append("")
+    lines.append("Matches")
+    for job in payload["matched_jobs"]:
+        if isinstance(job, dict):
+            lines.append(f"- {job.get('title', 'Role')}: {job.get('match_score', 0)}%")
+    return lines
+
+
 def login_required(view_func):
     @wraps(view_func)
     def wrapped(*args, **kwargs):
@@ -418,7 +1049,22 @@ def login_required(view_func):
     return wrapped
 
 
+def admin_required(view_func):
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        current_user = get_current_user()
+        if not current_user:
+            flash("Please log in to access that page.", "error")
+            return redirect(url_for("login"))
+        if current_user["username"] != app.config.get("ADMIN_USERNAME", "admin"):
+            flash("Admin access is required.", "error")
+            return redirect(url_for("index"))
+        return view_func(*args, **kwargs)
+    return wrapped
+
+
 @app.route("/login", methods=["GET", "POST"])
+@rate_limit(10, 300)
 def login():
     if session.get("user"):
         flash("You are already logged in.", "success")
@@ -438,6 +1084,7 @@ def login():
 
 
 @app.route("/register", methods=["GET", "POST"])
+@rate_limit(5, 300)
 def register():
     if session.get("user"):
         flash("You are already logged in.", "success")
@@ -482,6 +1129,7 @@ def logout():
 
 
 @app.route("/contact", methods=["GET", "POST"])
+@rate_limit(5, 300)
 def contact():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -490,6 +1138,12 @@ def contact():
         message = request.form.get("message", "").strip()
         if not name or not email or not message:
             flash("Please fill in your name, email, and message.", "error")
+            return redirect(url_for("contact"))
+        if not EMAIL_PATTERN.fullmatch(email):
+            flash("Please enter a valid email address.", "error")
+            return redirect(url_for("contact"))
+        if any(len(value) > MAX_TEXT_INPUT_LENGTH for value in [name, email, subject, message]):
+            flash("Please keep contact fields under 5,000 characters.", "error")
             return redirect(url_for("contact"))
         save_contact_submission(name, email, subject, message)
         flash("Your message has been sent. You will be contacted shortly.", "success")
@@ -503,45 +1157,59 @@ def about():
 
 
 @app.route("/", methods=["GET", "POST"])
+@rate_limit(12, 300)
 def index():
     if request.method == "POST":
         resume_file = request.files.get("resume_file")
         if not resume_file or resume_file.filename == "":
-            flash("Please upload a resume file in PDF or TXT format.", "error")
-            return redirect(request.url)
+            flash("Please upload a resume file in PDF, DOCX, or TXT format.", "error")
+            return redirect(url_for("index"))
 
         filename = secure_filename(resume_file.filename)
         if not allowed_file(filename):
-            flash("Only PDF and TXT resume uploads are supported.", "error")
-            return redirect(request.url)
+            flash("Only PDF, DOCX, and TXT resume uploads are supported.", "error")
+            return redirect(url_for("index"))
 
+        current_user = get_current_user()
+        save_path = None
         try:
             file_ext = filename.rsplit(".", 1)[1].lower()
-            save_path = UPLOAD_FOLDER / filename
-            resume_file.save(save_path)
-            extracted_text = ""
-            if file_ext == "pdf":
-                extracted_text = extract_text_from_pdf(save_path)
-            else:
-                extracted_text = save_path.read_text(encoding="utf-8", errors="ignore")
+            target_title = request.form.get("job_title", "").strip()
+            target_description = request.form.get("job_description", "").strip()
+            if len(target_title) > 160 or len(target_description) > MAX_TEXT_INPUT_LENGTH:
+                flash("Please keep the target role title and description shorter before scanning.", "error")
+                return redirect(url_for("index"))
+            target_text = f"{target_title} {target_description}".strip()
+            save_path = save_upload_temporarily(resume_file, filename, current_user["id"] if current_user else None)
+            if not file_signature_matches(save_path, file_ext):
+                flash("The uploaded file content does not match its extension. Please upload a valid PDF, DOCX, or TXT resume.", "error")
+                return redirect(url_for("index"))
+            extracted_text = extract_resume_text(save_path, file_ext)
 
             if not extracted_text.strip():
-                flash("Unable to parse text from the uploaded resume. Please verify the file contents.", "error")
-                return redirect(request.url)
+                flash("Unable to parse readable text from the resume. If this is a scanned PDF, install OCR support or export it as DOCX/PDF with selectable text.", "error")
+                return redirect(url_for("index"))
 
             text = normalize_text(extracted_text)
-            criteria_scores = build_criteria_scores(text, file_ext)
-            total_score = int(np.clip(sum(criteria_scores.values()) * 1, 0, 100))
-            chart_path = CHART_FOLDER / "score_chart.png"
-            generate_chart(criteria_scores, chart_path)
-            matched_jobs = find_applicable_jobs(text)
-            current_user = get_current_user()
-            save_report(
+            profile = extract_resume_profile(extracted_text)
+            target_job = build_target_job_match(text, target_title, target_description)
+            criteria_scores = build_criteria_scores(text, file_ext, profile, normalize_text(target_text))
+            score_details = build_score_details(criteria_scores, text, file_ext, profile, normalize_text(target_text))
+            total_score = calculate_weighted_score(criteria_scores)
+            matched_jobs = find_applicable_jobs(text, profile, target_job)
+            suggestions = build_resume_suggestions(criteria_scores, matched_jobs, profile, text)
+            previous_score = get_latest_score(current_user["id"] if current_user else None)
+            profile["target_role"] = target_title
+            profile["target_description_provided"] = bool(target_description)
+            profile["score_details"] = score_details
+            report_id = save_report(
                 current_user["id"] if current_user else None,
                 filename,
                 total_score,
                 matched_jobs,
                 criteria_scores,
+                suggestions,
+                profile,
             )
 
             return render_template(
@@ -549,15 +1217,28 @@ def index():
                 filename=filename,
                 score=total_score,
                 criteria_scores=criteria_scores,
-                chart_url=url_for("static", filename="images/score_chart.png"),
+                score_details=score_details,
                 matched_jobs=matched_jobs,
+                suggestions=suggestions,
+                analysis=profile,
+                previous_score=previous_score,
+                target_title=target_title,
+                report_id=report_id,
             )
         except Exception as e:
             traceback.print_exc()
             flash(f"An unexpected error occurred while processing the resume: {e}", "error")
-            return redirect(request.url)
+            return redirect(url_for("index"))
+        finally:
+            if save_path and save_path.exists():
+                save_path.unlink(missing_ok=True)
 
     return render_template("index.html")
+
+
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    return index()
 
 
 @app.route("/history")
@@ -585,52 +1266,92 @@ def history():
         }
         for row in raw_rows
     ]
-    return render_template("history.html", rows=rows)
+    scores = [row["score"] for row in rows if row["score"] is not None]
+    dashboard = {
+        "total_scans": len(rows),
+        "average_score": round(sum(scores) / len(scores)) if scores else 0,
+        "best_score": max(scores) if scores else 0,
+        "trend_scores": list(reversed(scores[:8])),
+        "trend_labels": [f"Scan {index + 1}" for index in range(min(len(scores), 8))],
+    }
+    return render_template("history.html", rows=rows, dashboard=dashboard)
 
 
 @app.route("/history/<int:report_id>")
 @login_required
 def history_detail(report_id: int):
     current_user = get_current_user()
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        accessible_user_ids = get_accessible_user_ids(conn, current_user["id"])
-        placeholders = ", ".join(["?"] * len(accessible_user_ids))
-        row = conn.execute(
-            f"SELECT id, filename, uploaded_at, score, matched_jobs, criteria "
-            f"FROM reports WHERE id = ? AND user_id IN ({placeholders})",
-            (report_id, *accessible_user_ids),
-        ).fetchone()
-    finally:
-        conn.close()
+    payload = get_report_payload(report_id, current_user["id"])
 
-    if not row:
+    if not payload:
         flash("That history entry is not available for this account.", "error")
         return redirect(url_for("history"))
 
-    matched_jobs = parse_report_payload(row[4], [])
-    criteria_scores = parse_report_payload(row[5], {})
-    if isinstance(matched_jobs, str):
-        matched_jobs = [{"title": title.strip()} for title in matched_jobs.split(",") if title.strip()]
-    if not isinstance(matched_jobs, list):
-        matched_jobs = []
-    if not isinstance(criteria_scores, dict):
-        criteria_scores = {}
+    return render_template("history_detail.html", **payload)
 
+
+@app.route("/history/<int:report_id>/export.pdf")
+@login_required
+def export_report_pdf(report_id: int):
+    current_user = get_current_user()
+    payload = get_report_payload(report_id, current_user["id"])
+    if not payload:
+        flash("That history entry is not available for this account.", "error")
+        return redirect(url_for("history"))
+    pdf = build_simple_pdf(report_lines(payload))
+    filename = secure_filename(f"ats-report-{report_id}.pdf")
+    return Response(
+        pdf,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
+@app.route("/admin", methods=["GET", "POST"])
+@admin_required
+@rate_limit(10, 300)
+def admin():
+    if request.method == "POST":
+        title = request.form.get("title", "").strip()
+        keywords = request.form.get("keywords", "").strip()
+        description = request.form.get("description", "").strip()
+        if not title or not keywords:
+            flash("Job title and keywords are required.", "error")
+            return redirect(url_for("admin"))
+        if any(len(value) > MAX_CATALOG_FIELD_LENGTH for value in [title, keywords, description]):
+            flash("Please keep catalog fields under 800 characters.", "error")
+            return redirect(url_for("admin"))
+        jobs_df = load_job_data()
+        new_row = pd.DataFrame([{"title": title, "keywords": keywords, "description": description}])
+        jobs_df = pd.concat([jobs_df, new_row], ignore_index=True)
+        jobs_df.to_csv(JOB_DATA_PATH, index=False)
+        flash("Job role added to the recommendation catalog.", "success")
+        return redirect(url_for("admin"))
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        contacts = conn.execute(
+            "SELECT name, email, subject, message, created_at FROM contacts ORDER BY created_at DESC LIMIT 20"
+        ).fetchall()
+        report_count = conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+        user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    finally:
+        conn.close()
+    jobs = load_job_data().to_dict(orient="records")
     return render_template(
-        "history_detail.html",
-        report={
-            "id": row[0],
-            "filename": row[1],
-            "uploaded_at": row[2],
-            "score": row[3],
-        },
-        matched_jobs=matched_jobs,
-        criteria_scores=criteria_scores,
+        "admin.html",
+        contacts=contacts,
+        jobs=jobs,
+        report_count=report_count,
+        user_count=user_count,
     )
 
 
 if __name__ == "__main__":
     init_db()
     load_job_data()
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(
+        debug=os.environ.get("FLASK_DEBUG") == "1",
+        host=os.environ.get("FLASK_RUN_HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "5000")),
+    )

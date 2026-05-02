@@ -17,11 +17,53 @@ content %}
       <div class="criteria-card">
         <strong>{{ name }}</strong>
         <span>{{ value }} / 10</span>
+        {% if analysis.score_details and analysis.score_details.get(name) %}
+        <p>{{ analysis.score_details.get(name) }}</p>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
     {% else %}
     <p class="empty-state">Detailed scoring is not available for this saved report.</p>
+    {% endif %}
+  </section>
+  <section class="criteria-block">
+    <h2>Resume Insights</h2>
+    {% if analysis %}
+    <div class="criteria-grid">
+      <div class="criteria-card">
+        <strong>Extracted Skills</strong>
+        <span>{{ analysis.skills | join(", ") if analysis.skills else "None detected" }}</span>
+      </div>
+      <div class="criteria-card">
+        <strong>Experience</strong>
+        <span>{{ analysis.experience_years or 0 }} year estimate</span>
+      </div>
+      <div class="criteria-card">
+        <strong>Action Verbs</strong>
+        <span>{{ analysis.action_verbs | join(", ") if analysis.action_verbs else "Needs stronger verbs" }}</span>
+      </div>
+      <div class="criteria-card">
+        <strong>Word Count</strong>
+        <span>{{ analysis.word_count or 0 }}</span>
+      </div>
+    </div>
+    {% else %}
+    <p class="empty-state">NLP insights are not available for this saved report.</p>
+    {% endif %}
+  </section>
+  <section class="jobs-block">
+    <h2>Resume Improvement Suggestions</h2>
+    {% if suggestions %}
+    <div class="jobs-grid">
+      {% for suggestion in suggestions %}
+      <article class="job-card">
+        <p>{{ suggestion }}</p>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No saved improvement suggestions were found for this report.</p>
     {% endif %}
   </section>
   <section class="jobs-block">
@@ -42,6 +84,11 @@ content %}
           Keywords: {{ job.matched_keywords | join(", ") }}
         </div>
         {% endif %}
+        {% if job.missing_keywords %}
+        <div class="keyword-list">
+          Missing: {{ job.missing_keywords | join(", ") }}
+        </div>
+        {% endif %}
       </article>
       {% endfor %}
     </div>
@@ -52,6 +99,7 @@ content %}
   <div class="actions-row">
     <a class="secondary-button" href="{{ url_for('history') }}">Back to History</a>
     <a class="secondary-button" href="{{ url_for('index') }}">Upload Another Resume</a>
+    <a class="secondary-button" href="{{ url_for('export_report_pdf', report_id=report.id) }}">Download PDF</a>
   </div>
 </main>
 {% endblock %}

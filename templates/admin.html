@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Admin | ATS Resume Scanner{% endblock %}
+{% block content %}
+<main class="content-card result-card">
+  <header class="hero result-hero">
+    <div>
+      <h1>Admin</h1>
+      <p>Manage the role catalog and review recent contact messages.</p>
+    </div>
+  </header>
+
+  <section class="dashboard-grid">
+    <article class="metric-card">
+      <span>Users</span>
+      <strong>{{ user_count }}</strong>
+    </article>
+    <article class="metric-card">
+      <span>Reports</span>
+      <strong>{{ report_count }}</strong>
+    </article>
+    <article class="metric-card">
+      <span>Catalog Roles</span>
+      <strong>{{ jobs | length }}</strong>
+    </article>
+  </section>
+
+  <section class="criteria-block">
+    <h2>Add Role</h2>
+    <form method="post" class="contact-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
+      <label>
+        Title
+        <input type="text" name="title" placeholder="Example: UX Designer" required />
+      </label>
+      <label>
+        Keywords
+        <input type="text" name="keywords" placeholder="research, figma, prototyping, usability" required />
+      </label>
+      <label>
+        Description
+        <textarea name="description" rows="4" placeholder="Short role description"></textarea>
+      </label>
+      <button class="primary-button" type="submit">Add Role</button>
+    </form>
+  </section>
+
+  <section class="jobs-block">
+    <h2>Role Catalog</h2>
+    <div class="jobs-grid">
+      {% for job in jobs %}
+      <article class="job-card">
+        <h3>{{ job.title }}</h3>
+        <p>{{ job.description }}</p>
+        <div class="keyword-list">{{ job.keywords }}</div>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="jobs-block">
+    <h2>Recent Contact Messages</h2>
+    {% if contacts %}
+    <div class="history-list">
+      {% for contact in contacts %}
+      <article class="history-row">
+        <div>
+          <h3>{{ contact[0] }} &lt;{{ contact[1] }}&gt;</h3>
+          <p>{{ contact[2] or "No subject" }} - {{ contact[4] }}</p>
+          <p>{{ contact[3] }}</p>
+        </div>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">No contact messages yet.</p>
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
