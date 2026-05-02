@@ -1,0 +1,723 @@
+DATABASE EXPLANATION FOR TALENT ACQUISITION SYSTEM
+===========================================
+
+1. DATABASE OVERVIEW
+--------------------
+This project uses SQLite as its database.
+
+Database file:
+tas_reports.db
+
+Database path in code:
+DB_PATH = BASE_DIR / "tas_reports.db"
+
+SQLite is a lightweight file-based database. It is suitable for this project because the app is a local/demo Flask application and does not need a separate database server. All database data is stored inside one file, tas_reports.db.
+
+The database is used for three main purposes:
+
+1. User accounts
+   - Registration
+   - Login
+   - Password authentication
+   - Admin access checking
+
+2. Resume scan reports
+   - Saving uploaded resume analysis results
+   - Showing scan history
+   - Showing report details
+   - Exporting reports as PDF
+   - Comparing the latest score with previous scores
+
+3. Contact messages
+   - Saving contact form submissions
+   - Displaying messages in the admin dashboard
+
+
+2. WHERE THE DATABASE IS CONFIGURED
+-----------------------------------
+In app.py, the database location is defined near the top:
+
+Code:
+DB_PATH = BASE_DIR / "tas_reports.db"
+
+Meaning:
+- BASE_DIR is the folder where app.py is located.
+- tas_reports.db is created inside the project folder.
+- Every database function connects to this file using sqlite3.connect(DB_PATH).
+
+Example connection pattern used throughout the app:
+
+conn = sqlite3.connect(DB_PATH)
+try:
+    # execute SQL query
+finally:
+    conn.close()
+
+This pattern ensures the database connection is closed after each operation.
+
+
+3. DATABASE INITIALIZATION
+--------------------------
+Main function:
+init_db()
+
+Where it is called:
+- At the bottom of app.py when the application starts:
+
+if __name__ == "__main__":
+    init_db()
+    load_job_data()
+    app.run(...)
+
+Purpose of init_db():
+- Creates all required database tables if they do not exist.
+- Creates the default admin user if no user exists.
+- Updates older database schemas if columns are missing.
+- Assigns older reports to a default user if they do not have user_id.
+
+Code summary:
+conn = sqlite3.connect(DB_PATH)
+conn.execute("CREATE TABLE IF NOT EXISTS reports (...)")
+conn.execute("CREATE TABLE IF NOT EXISTS contacts (...)")
+conn.execute("CREATE TABLE IF NOT EXISTS users (...)")
+conn.commit()
+create_default_user(conn)
+ensure_report_columns(conn)
+ensure_reports_user_scope(conn)
+assign_legacy_reports_to_default_user(conn)
+conn.close()
+
+Meeting explanation:
+"When the Flask app starts, init_db() makes sure the SQLite database exists and has the required tables. If this is the first run, SQLite creates tas_reports.db automatically. The app then creates users, reports, and contacts tables if they are missing."
+
+
+4. DATABASE TABLES
+------------------
+The project uses three main tables:
+
+1. users
+2. reports
+3. contacts
+
+
+5. USERS TABLE
+--------------
+Table creation code:
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE,
+    password_hash TEXT
+)
+
+Columns:
+- id
+  Unique user ID generated automatically.
+
+- username
+  Unique username used for login.
+
+- password_hash
+  Hashed password. The real password is never stored directly.
+
+Purpose:
+The users table stores registered user accounts. It is used for registration, login, admin access, and report ownership.
+
+Functions that use the users table:
+
+create_default_user(conn)
+- Checks if any user exists.
+- If not, inserts a default admin account.
+- Default username: admin
+- Default password: Password123!
+- The password is stored as a hash using generate_password_hash().
+
+Important code:
+cursor = conn.execute("SELECT 1 FROM users LIMIT 1")
+if cursor.fetchone() is None:
+    password_hash = generate_password_hash("Password123!")
+    conn.execute(
+        "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+        ("admin", password_hash),
+    )
+
+get_user(username)
+- Looks up a user by username.
+- Used during login and current user detection.
+
+Important code:
+row = conn.execute(
+    "SELECT id, username, password_hash FROM users WHERE username = ?",
+    (username,)
+).fetchone()
+
+create_user(username, password)
+- Creates a new user during registration.
+- Hashes the password before saving.
+- Handles duplicate usernames using sqlite3.IntegrityError.
+
+Important code:
+conn.execute(
+    "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+    (username, generate_password_hash(password)),
+)
+
+get_current_user()
+- Reads the username from the Flask session.
+- Calls get_user() to get the database record.
+
+Login route usage:
+- The /login route calls get_user(username).
+- It checks the entered password with check_password_hash().
+- If valid, it stores the username in session["user"].
+
+Register route usage:
+- The /register route validates username and password.
+- It calls create_user(username, password).
+
+Admin usage:
+- admin_required() calls get_current_user().
+- It checks whether current_user["username"] matches ADMIN_USERNAME.
+- By default, ADMIN_USERNAME is "admin".
+
+Meeting explanation:
+"The users table manages authentication. Passwords are not stored as plain text. They are hashed using Werkzeug, and during login the app compares the entered password with the stored hash."
+
+
+6. REPORTS TABLE
+----------------
+Table creation code:
+
+CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    filename TEXT,
+    uploaded_at TEXT,
+    score INTEGER,
+    matched_jobs TEXT,
+    criteria TEXT,
+    suggestions TEXT,
+    analysis TEXT
+)
+
+Columns:
+- id
+  Unique report ID.
+
+- user_id
+  ID of the user who created the report.
+  If the user is not logged in, this can be null.
+
+- filename
+  Original uploaded resume filename.
+
+- uploaded_at
+  UTC timestamp when the report was saved.
+
+- score
+  Final TAS score out of 100.
+
+- matched_jobs
+  JSON text containing recommended jobs, match scores, matched keywords, and missing keywords.
+
+- criteria
+  JSON text containing category-wise scores.
+  Example categories:
+  Contact Information, Professional Summary, Work Experience, Education, Skills, TAS Optimization, Consistency, Proofreading, File Format, Relevance.
+
+- suggestions
+  JSON text containing improvement suggestions.
+
+- analysis
+  JSON text containing detailed analysis information such as extracted skills, entities, score explanations, score weights, analysis steps, bullet rewrites, target role, and word count.
+
+Why some columns are TEXT even though they store structured data:
+SQLite stores the complex Python objects as JSON strings.
+
+For example:
+- matched_jobs is a Python list of dictionaries.
+- criteria is a Python dictionary.
+- suggestions is a Python list.
+- analysis is a Python dictionary.
+
+Before saving:
+json.dumps(...) converts Python data into JSON text.
+
+After reading:
+json.loads(...) converts JSON text back into Python data.
+
+Main function that saves reports:
+save_report()
+
+Important code:
+conn.execute(
+    "INSERT INTO reports (user_id, filename, uploaded_at, score, matched_jobs, criteria, suggestions, analysis) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    (
+        user_id,
+        filename,
+        utc_timestamp(),
+        score,
+        json.dumps(matched_jobs),
+        json.dumps(criteria_scores),
+        json.dumps(suggestions or []),
+        json.dumps(analysis or {}),
+    ),
+)
+
+Where save_report() is used:
+- In index(), after resume analysis is complete.
+
+Resume scan flow using reports table:
+1. User uploads resume.
+2. App extracts text.
+3. App calculates score.
+4. App finds matched jobs.
+5. App generates suggestions.
+6. App generates analysis steps and bullet rewrites.
+7. save_report() inserts the full result into reports.
+8. The report ID is returned and sent to result.html.
+
+Important index() code summary:
+report_id = save_report(
+    current_user["id"] if current_user else None,
+    filename,
+    total_score,
+    matched_jobs,
+    criteria_scores,
+    suggestions,
+    profile,
+)
+
+Meeting explanation:
+"The reports table is the most important table in the project. Every time a resume is scanned, the final result is saved here. The app does not permanently store the uploaded resume file. Instead, it stores the processed report data such as score, criteria, matched jobs, suggestions, and analysis."
+
+
+7. CONTACTS TABLE
+-----------------
+Table creation code:
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    email TEXT,
+    subject TEXT,
+    message TEXT,
+    created_at TEXT
+)
+
+Columns:
+- id
+  Unique contact message ID.
+
+- name
+  Name entered in contact form.
+
+- email
+  Email entered in contact form.
+
+- subject
+  Optional subject.
+
+- message
+  Contact message.
+
+- created_at
+  UTC timestamp when the message was submitted.
+
+Main function:
+save_contact_submission(name, email, subject, message)
+
+Important code:
+conn.execute(
+    "INSERT INTO contacts (name, email, subject, message, created_at) VALUES (?, ?, ?, ?, ?)",
+    (name, email, subject, message, utc_timestamp()),
+)
+
+Where contacts table is used:
+- /contact route saves contact form submissions.
+- /admin route reads the latest contact messages.
+
+Contact route flow:
+1. User opens /contact.
+2. User submits name, email, subject, and message.
+3. App validates required fields.
+4. App validates email format.
+5. App calls save_contact_submission().
+6. Message is stored in contacts table.
+
+Admin route contact usage:
+contacts = conn.execute(
+    "SELECT name, email, subject, message, created_at FROM contacts ORDER BY created_at DESC LIMIT 20"
+).fetchall()
+
+Meeting explanation:
+"The contacts table stores support or contact messages from users. The admin dashboard reads the latest messages so the admin can review them."
+
+
+8. WHERE THE DATABASE IS USED IN ROUTES
+---------------------------------------
+Route: /register
+Function: register()
+Database use:
+- Checks whether username already exists using get_user().
+- Creates user using create_user().
+- Inserts into users table.
+
+Route: /login
+Function: login()
+Database use:
+- Reads user record using get_user().
+- Verifies password hash from users table.
+
+Route: /
+Function: index()
+Database use:
+- Reads current user using get_current_user().
+- Reads latest previous score using get_latest_score().
+- Saves new scan report using save_report().
+- Inserts into reports table.
+
+Route: /analyze
+Function: analyze()
+Database use:
+- Calls index(), so it uses the same database flow as /.
+
+Route: /history
+Function: history()
+Database use:
+- Requires login.
+- Gets current user.
+- Reads recent reports from reports table.
+- Builds dashboard stats from saved scores.
+
+Important code:
+raw_rows = conn.execute(
+    "SELECT id, filename, uploaded_at, score, matched_jobs "
+    "FROM reports WHERE user_id IN (...) ORDER BY uploaded_at DESC LIMIT 20"
+).fetchall()
+
+Route: /history/<report_id>
+Function: history_detail(report_id)
+Database use:
+- Requires login.
+- Reads one report using get_report_payload().
+- Shows stored report details.
+
+Route: /history/<report_id>/export.pdf
+Function: export_report_pdf(report_id)
+Database use:
+- Requires login.
+- Reads one report using get_report_payload().
+- Converts the stored report into PDF lines.
+- Returns a generated PDF.
+
+Route: /contact
+Function: contact()
+Database use:
+- Saves contact form submission into contacts table.
+
+Route: /admin
+Function: admin()
+Database use:
+- Requires admin user.
+- Reads latest contact messages from contacts table.
+- Counts total reports from reports table.
+- Counts total users from users table.
+
+Important code:
+contacts = conn.execute(
+    "SELECT name, email, subject, message, created_at FROM contacts ORDER BY created_at DESC LIMIT 20"
+).fetchall()
+
+report_count = conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+
+9. REPORT HISTORY FLOW IN DETAIL
+--------------------------------
+The history page depends heavily on the reports table.
+
+Function:
+history()
+
+Steps:
+1. User must be logged in because the route uses @login_required.
+2. get_current_user() gets the current user from the session and users table.
+3. get_accessible_user_ids() decides which user IDs the current user can access.
+4. The app queries the reports table for recent reports.
+5. matched_jobs is summarized using summarize_matched_jobs().
+6. Scores are used to calculate:
+   - total scans
+   - average score
+   - best score
+   - trend scores
+7. Data is rendered in history.html.
+
+Why get_accessible_user_ids() exists:
+- It helps control which reports a user can see.
+- Normally, a user sees only their own reports.
+- It also supports legacy/default-user handling for older reports.
+
+Meeting explanation:
+"The history page is completely database-driven. It reads the user's saved reports from the reports table and calculates dashboard metrics like average score and best score."
+
+
+10. REPORT DETAIL AND PDF EXPORT FLOW
+-------------------------------------
+Function:
+get_report_payload(report_id, user_id)
+
+Purpose:
+- Reads one report from reports table.
+- Ensures the current user has permission to access it.
+- Returns a normalized dictionary for templates and PDF export.
+
+Important query:
+SELECT id, filename, uploaded_at, score, matched_jobs, criteria, suggestions, analysis
+FROM reports
+WHERE id = ? AND user_id IN (...)
+
+Function:
+normalize_report_payload(row)
+
+Purpose:
+- Converts the database row into a structured dictionary.
+- Converts JSON text back into Python objects.
+
+It parses:
+- matched_jobs
+- criteria_scores
+- suggestions
+- analysis
+
+Function:
+report_lines(payload)
+
+Purpose:
+- Converts the report dictionary into plain text lines.
+- These lines are used to create the PDF.
+
+Function:
+build_simple_pdf(lines)
+
+Purpose:
+- Builds a simple PDF in memory.
+
+Function:
+export_report_pdf(report_id)
+
+Purpose:
+- Reads the report from the database.
+- Builds a PDF response.
+- Sends it to the browser as a downloadable file.
+
+Meeting explanation:
+"For report details and PDF export, the app does not re-analyze the resume. It reads the already saved result from the reports table, converts JSON fields back into Python lists and dictionaries, and then displays or exports that saved data."
+
+
+11. DATABASE MIGRATION HELPERS
+------------------------------
+These functions allow the app to work even if the database was created by an older version of the project.
+
+ensure_report_columns(conn)
+Purpose:
+- Checks the reports table structure.
+- Adds suggestions and analysis columns if missing.
+
+Important code:
+columns = [row[1] for row in conn.execute("PRAGMA table_info(reports)").fetchall()]
+for column, column_type in {"suggestions": "TEXT", "analysis": "TEXT"}.items():
+    if column not in columns:
+        conn.execute(f"ALTER TABLE reports ADD COLUMN {column} {column_type}")
+
+ensure_reports_user_scope(conn)
+Purpose:
+- Adds user_id to reports table if missing.
+
+Important code:
+if "user_id" not in columns:
+    conn.execute("ALTER TABLE reports ADD COLUMN user_id INTEGER")
+
+assign_legacy_reports_to_default_user(conn)
+Purpose:
+- Finds a primary/default user.
+- Assigns older reports with null user_id to that user.
+
+Important code:
+UPDATE reports SET user_id = ? WHERE user_id IS NULL
+
+Meeting explanation:
+"The migration helper functions are simple schema update functions. They make sure older versions of the database still work after new fields are added to the project."
+
+
+12. JSON HANDLING IN DATABASE
+-----------------------------
+The app stores nested report data as JSON text.
+
+Function:
+parse_report_payload(value, fallback)
+
+Purpose:
+- Converts stored JSON text back to Python data.
+- If JSON parsing fails, it tries literal_eval for older formats.
+- If both fail, it returns a safe fallback.
+
+Important code:
+try:
+    return json.loads(value)
+except (json.JSONDecodeError, TypeError):
+    try:
+        return literal_eval(value)
+    except (ValueError, SyntaxError):
+        return fallback
+
+Why this matters:
+- Reports contain complex data.
+- For example, matched_jobs is not a simple string; it is a list of job dictionaries.
+- Storing it as JSON avoids creating many extra tables for a demo project.
+
+Example matched_jobs structure:
+[
+    {
+        "title": "Data Analyst",
+        "match_score": 82,
+        "matched_keywords": ["python", "sql", "reporting"],
+        "missing_keywords": ["tableau"]
+    }
+]
+
+Example criteria structure:
+{
+    "Contact Information": 10,
+    "Professional Summary": 6,
+    "Work Experience": 8,
+    "Skills": 9
+}
+
+Example analysis structure:
+{
+    "skills": ["python", "sql", "pandas"],
+    "experience_years": 2,
+    "word_count": 430,
+    "score_details": {...},
+    "analysis_steps": [...],
+    "bullet_rewrites": [...]
+}
+
+
+13. DATABASE SECURITY POINTS
+----------------------------
+Password security:
+- Passwords are hashed before saving.
+- The users table stores password_hash, not the original password.
+- Login uses check_password_hash().
+
+SQL injection prevention:
+- The app uses parameterized SQL queries with ? placeholders.
+- User input is passed as separate parameters, not directly concatenated into SQL.
+
+Example:
+conn.execute(
+    "SELECT id, username, password_hash FROM users WHERE username = ?",
+    (username,)
+)
+
+Report access control:
+- History and export routes require login.
+- get_report_payload() checks report ID and allowed user IDs.
+- This prevents users from directly accessing reports that do not belong to them.
+
+Privacy:
+- Uploaded resume files are deleted after parsing.
+- The database stores analysis output and report metadata, not the uploaded file itself.
+
+Runtime file:
+- tas_reports.db may contain private user data.
+- It should not be committed to GitHub.
+
+
+14. DATABASE USE IN TESTS
+-------------------------
+The tests do not use the real tas_reports.db file.
+
+In tests/test_app.py:
+- pytest creates a temporary runtime directory.
+- DB_PATH is changed to a temporary reports.db.
+- JOB_DATA_PATH is changed to a temporary job_data.csv.
+- init_db() creates fresh test tables.
+
+Important test setup:
+monkeypatch.setattr(app_module, "DB_PATH", runtime_dir / "reports.db")
+app_module.init_db()
+
+Why this is good:
+- Tests do not damage real app data.
+- Each test gets an isolated database.
+- Test results are repeatable.
+
+Database-related tests:
+- Registration and login create and read users.
+- Resume analysis saves a report.
+- History reads saved reports.
+- PDF export reads report data.
+- Admin dashboard reads counts and supports catalog updates.
+
+
+15. SIMPLE DATABASE FLOW DIAGRAM
+--------------------------------
+User Registration:
+register page -> validate input -> create_user() -> INSERT INTO users
+
+User Login:
+login page -> get_user() -> SELECT FROM users -> check_password_hash() -> session["user"]
+
+Resume Scan:
+upload resume -> analyze text -> generate score -> save_report() -> INSERT INTO reports
+
+History Page:
+logged-in user -> history() -> SELECT FROM reports -> render history.html
+
+Report Detail:
+history detail -> get_report_payload() -> SELECT FROM reports -> normalize JSON -> render history_detail.html
+
+PDF Export:
+export route -> get_report_payload() -> SELECT FROM reports -> report_lines() -> build_simple_pdf()
+
+Contact Form:
+contact page -> validate input -> save_contact_submission() -> INSERT INTO contacts
+
+Admin Dashboard:
+admin page -> SELECT FROM contacts -> SELECT COUNT FROM reports -> SELECT COUNT FROM users
+
+
+16. MEETING SCRIPT FOR DATABASE EXPLANATION
+-------------------------------------------
+"The project uses SQLite as the database, stored in a local file called tas_reports.db. The database is initialized when the Flask app starts using the init_db() function. This function creates three tables: users, reports, and contacts.
+
+The users table stores login accounts. It contains an ID, username, and password hash. Passwords are never saved directly. During registration, create_user() hashes the password and inserts the user. During login, get_user() reads the user record and check_password_hash() verifies the password.
+
+The reports table stores resume scan results. Every time a resume is analyzed, save_report() inserts a new row containing the user ID, filename, upload time, final score, matched jobs, criteria scores, suggestions, and detailed analysis. Complex fields like matched jobs and analysis are saved as JSON text. This is why the app can later show history, report details, and export the report as a PDF without scanning the resume again.
+
+The contacts table stores messages submitted from the contact page. The admin dashboard reads these messages and also shows total report and user counts.
+
+The database is used in multiple routes: registration and login use the users table, resume scanning saves to reports, history and PDF export read from reports, the contact page writes to contacts, and the admin page reads from contacts, reports, and users.
+
+For security, the app uses parameterized SQL queries, hashed passwords, login-required routes for history and export, and access checks so a user can only view reports they are allowed to access. Also, uploaded resume files are deleted after parsing, so the database stores the report result, not the original resume file."
+
+
+17. IMPORTANT POINTS TO REMEMBER
+--------------------------------
+- Database name: tas_reports.db
+- Database type: SQLite
+- Python module used: sqlite3
+- Main initialization function: init_db()
+- Main report saving function: save_report()
+- Main user functions: create_user(), get_user(), get_current_user()
+- Main contact function: save_contact_submission()
+- Main report reading function: get_report_payload()
+- Tables: users, reports, contacts
+- JSON columns in reports: matched_jobs, criteria, suggestions, analysis
+- Uploaded files are not permanently stored
+- Passwords are stored as hashes
+- History and PDF export are powered by saved reports in the database

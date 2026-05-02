@@ -46,7 +46,7 @@ BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = BASE_DIR / "uploads"
 CHART_FOLDER = BASE_DIR / "static" / "images"
 JOB_DATA_PATH = BASE_DIR / "job_data.csv"
-DB_PATH = BASE_DIR / "ats_reports.db"
+DB_PATH = BASE_DIR / "tas_reports.db"
 ALLOWED_EXTENSIONS = {"pdf", "txt", "docx"}
 RATE_LIMITS: dict[tuple[str, str], list[float]] = {}
 
@@ -133,7 +133,7 @@ SCORING_WEIGHTS = {
     "Work Experience": 0.18,
     "Education": 0.10,
     "Skills": 0.20,
-    "ATS Optimization": 0.14,
+    "TAS Optimization": 0.14,
     "Consistency": 0.07,
     "Proofreading": 0.06,
     "File Format": 0.04,
@@ -142,10 +142,10 @@ SCORING_WEIGHTS = {
 
 ROLE_WEIGHT_OVERRIDES = {
     "data analyst": {"Skills": 0.28, "Relevance": 0.08, "Work Experience": 0.16, "Education": 0.08},
-    "software engineer": {"Skills": 0.26, "Work Experience": 0.22, "ATS Optimization": 0.12, "Relevance": 0.06},
-    "developer": {"Skills": 0.28, "Work Experience": 0.22, "ATS Optimization": 0.12, "Relevance": 0.06},
+    "software engineer": {"Skills": 0.26, "Work Experience": 0.22, "TAS Optimization": 0.12, "Relevance": 0.06},
+    "developer": {"Skills": 0.28, "Work Experience": 0.22, "TAS Optimization": 0.12, "Relevance": 0.06},
     "product manager": {"Professional Summary": 0.14, "Work Experience": 0.22, "Skills": 0.16, "Relevance": 0.08},
-    "technical writer": {"Professional Summary": 0.16, "Proofreading": 0.12, "ATS Optimization": 0.12, "Relevance": 0.08},
+    "technical writer": {"Professional Summary": 0.16, "Proofreading": 0.12, "TAS Optimization": 0.12, "Relevance": 0.08},
 }
 
 try:
@@ -583,16 +583,16 @@ def explain_skills(text: str, profile: dict | None, score: int) -> str:
     return "No canonical skill names from the current skill dictionary were detected."
 
 
-def detect_ats_optimization(text: str) -> int:
+def detect_tas_optimization(text: str) -> int:
     hits = sum(1 for keyword in JOB_KEYWORDS if keyword in text)
     return min(10, hits * 2)
 
 
-def explain_ats_optimization(text: str, score: int) -> str:
+def explain_tas_optimization(text: str, score: int) -> str:
     found = [keyword for keyword in JOB_KEYWORDS if keyword in text]
     if found:
-        return f"Matched ATS-friendly terms: {', '.join(found[:6])}."
-    return "Few general ATS-friendly keywords were found in the resume text."
+        return f"Matched TAS-friendly terms: {', '.join(found[:6])}."
+    return "Few general TAS-friendly keywords were found in the resume text."
 
 
 def detect_consistency(text: str) -> int:
@@ -653,7 +653,7 @@ def build_criteria_scores(text: str, extension: str, profile: dict | None = None
         "Work Experience": detect_experience(text, profile),
         "Education": detect_education(text),
         "Skills": detect_skills(text, profile),
-        "ATS Optimization": detect_ats_optimization(text),
+        "TAS Optimization": detect_tas_optimization(text),
         "Consistency": detect_consistency(text),
         "Proofreading": detect_proofreading(text),
         "File Format": 10 if extension.lower() in {"pdf", "docx"} else 7,
@@ -669,10 +669,10 @@ def build_score_details(criteria_scores: dict, text: str, extension: str, profil
         "Work Experience": explain_experience(text, profile, criteria_scores.get("Work Experience", 0)),
         "Education": explain_education(text, criteria_scores.get("Education", 0)),
         "Skills": explain_skills(text, profile, criteria_scores.get("Skills", 0)),
-        "ATS Optimization": explain_ats_optimization(text, criteria_scores.get("ATS Optimization", 0)),
+        "TAS Optimization": explain_tas_optimization(text, criteria_scores.get("TAS Optimization", 0)),
         "Consistency": explain_consistency(text, criteria_scores.get("Consistency", 0)),
         "Proofreading": explain_proofreading(text, criteria_scores.get("Proofreading", 0)),
-        "File Format": f"{extension.upper()} is {'a preferred ATS format' if extension.lower() in {'pdf', 'docx'} else 'accepted but less formatting-stable than PDF or DOCX'}.",
+        "File Format": f"{extension.upper()} is {'a preferred TAS format' if extension.lower() in {'pdf', 'docx'} else 'accepted but less formatting-stable than PDF or DOCX'}.",
         "Relevance": explain_relevance(text, target_text, criteria_scores.get("Relevance", 0)),
     }
     return {name: compact_reason(reason) for name, reason in explainers.items()}
@@ -709,7 +709,7 @@ def build_analysis_steps(criteria_scores: dict, matched_jobs: list, profile: dic
             "detail": f"Extracted {profile.get('word_count', 0)} words and {len(profile.get('skills', []))} skill signal(s).",
         },
         {
-            "label": "Checked ATS Signals",
+            "label": "Checked TAS Signals",
             "detail": f"Strongest area: {max(criteria_scores, key=criteria_scores.get)}. Weakest area: {min(criteria_scores, key=criteria_scores.get)}.",
         },
         {
@@ -900,7 +900,7 @@ def build_resume_suggestions(criteria_scores: dict, matched_jobs: list, profile:
     if profile.get("word_count", 0) < 180:
         suggestions.append("The resume text is quite short; add project, role, education, and achievement detail.")
     if not skills:
-        suggestions.append("Add explicit skill names so ATS systems can match your profile reliably.")
+        suggestions.append("Add explicit skill names so TAS systems can match your profile reliably.")
     target_match = next((job for job in matched_jobs if job.get("source") == "target"), None)
     if target_match and target_match.get("missing_keywords"):
         suggestions.append(f"Tailor this resume to the target role by adding evidence for: {', '.join(target_match['missing_keywords'][:5])}.")
@@ -1103,7 +1103,7 @@ def report_lines(payload: dict) -> list[str]:
     analysis = payload.get("analysis", {})
     score_details = analysis.get("score_details", {})
     lines = [
-        "ATS Resume Scanner Report",
+        "Talent Acquisition System Report",
         f"File: {report['filename']}",
         f"Saved: {report['uploaded_at']}",
         f"Score: {report['score']} / 100",
@@ -1403,7 +1403,7 @@ def export_report_pdf(report_id: int):
         flash("That history entry is not available for this account.", "error")
         return redirect(url_for("history"))
     pdf = build_simple_pdf(report_lines(payload))
-    filename = secure_filename(f"ats-report-{report_id}.pdf")
+    filename = secure_filename(f"tas-report-{report_id}.pdf")
     return Response(
         pdf,
         mimetype="application/pdf",

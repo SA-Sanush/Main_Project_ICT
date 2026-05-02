@@ -84,7 +84,7 @@ def test_role_adjusted_score_changes_weighting():
         "Work Experience": 5,
         "Education": 5,
         "Skills": 10,
-        "ATS Optimization": 6,
+        "TAS Optimization": 6,
         "Consistency": 6,
         "Proofreading": 8,
         "File Format": 10,

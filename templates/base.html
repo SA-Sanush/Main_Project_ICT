@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{% block title %}ATS Resume Scanner{% endblock %}</title>
+    <title>{% block title %}Talent Acquisition System{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
   </head>
   <body data-endpoint="{{ request.endpoint or '' }}">
     <div class="page-shell">
       <header class="navbar">
-        <a class="brand" href="{{ url_for('index') }}">ATS Resume Scanner</a>
+        <a class="brand" href="{{ url_for('index') }}">Talent Acquisition System</a>
         <nav class="nav-links">
           <a class="nav-link {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Home</a>
           <a class="nav-link {% if request.endpoint == 'about' %}active{% endif %}" href="{{ url_for('about') }}">About</a>

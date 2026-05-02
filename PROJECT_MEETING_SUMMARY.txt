@@ -1,0 +1,767 @@
+TALENT ACQUISITION SYSTEM - PROJECT MEETING SUMMARY
+============================================
+
+1. PROJECT OVERVIEW
+-------------------
+This project is a Flask-based Talent Acquisition System web application. It allows users to upload a resume in PDF, DOCX, or TXT format, analyzes the resume against common Talent Acquisition System criteria, compares it with an optional target job role or job description, recommends suitable job roles, and stores scan history for logged-in users.
+
+The main purpose of the project is to help job seekers understand how well their resume performs for TAS screening and how closely it matches a target role. The system gives a total score, category-wise scoring, job matches, missing keywords, improvement suggestions, and suggested bullet rewrites.
+
+The application also includes user registration, login, report history, PDF export, contact form submission, and an admin dashboard for viewing contact messages and managing the job recommendation catalog.
+
+
+2. TECHNOLOGY STACK
+-------------------
+Backend framework:
+- Flask is used as the web framework.
+- Flask handles routing, request processing, session management, rendering templates, redirects, flash messages, and HTTP responses.
+
+Database:
+- SQLite is used as the local relational database.
+- The database file is tas_reports.db.
+- SQLite is accessed using Python's built-in sqlite3 module.
+
+Frontend:
+- HTML templates are stored in the templates folder.
+- CSS styling is stored in static/css/style.css.
+- JavaScript behavior is stored in static/js/app.js.
+- Jinja2 template rendering is used through Flask's render_template function.
+
+Resume parsing:
+- pypdf or PyPDF2 is used for PDF text extraction.
+- python-docx is used for DOCX text extraction.
+- Plain TXT files are read directly.
+- pytesseract and pdf2image are optionally supported for OCR on scanned PDFs.
+
+Data processing:
+- pandas is used to load and update job_data.csv.
+- numpy is used for score clipping and numeric handling.
+- spaCy is optionally used for NLP entity extraction. If the configured spaCy model is not available, the app falls back to a blank spaCy model or rule-based logic.
+
+Security and utilities:
+- Werkzeug secure_filename is used to sanitize uploaded filenames.
+- Werkzeug password hashing is used to hash and verify user passwords.
+- secrets is used for session secret generation and CSRF token generation.
+- UUIDs are used to generate safe temporary upload filenames.
+
+Testing:
+- pytest is used for automated tests.
+- Tests are located in tests/test_app.py.
+
+
+3. MAIN FILES AND FOLDERS
+-------------------------
+app.py:
+The main application file. It contains the Flask app setup, route handlers, database functions, resume parsing, scoring logic, matching logic, authentication, admin logic, PDF export, and helper functions.
+
+templates/:
+Contains Jinja2 HTML pages:
+- base.html: shared layout
+- index.html: resume upload form and home page
+- result.html: scan result page
+- history.html: saved scan dashboard
+- history_detail.html: saved report details
+- login.html: login page
+- register.html: registration page
+- admin.html: admin dashboard
+- contact.html: contact form
+- about.html: about page
+
+static/css/style.css:
+Main stylesheet for the user interface, score cards, dashboard, result sections, history pages, assistant analysis steps, and bullet rewrite cards.
+
+static/js/app.js:
+Frontend JavaScript behavior for the app.
+
+job_data.csv:
+Local job recommendation catalog. It stores job titles, keywords, and descriptions used for matching resumes to roles.
+
+tas_reports.db:
+SQLite database created at runtime. It stores users, resume scan reports, and contact form submissions.
+
+tests/test_app.py:
+Automated tests for file validation, resume analysis, job matching, CSRF protection, login/register flow, history, PDF export, and admin catalog updates.
+
+requirements.txt:
+Lists project dependencies.
+
+README.md:
+Contains setup, running, testing, configuration, and limitation notes.
+
+
+4. APPLICATION FLOW
+-------------------
+Typical resume scan flow:
+
+1. User opens the home page at /.
+2. User uploads a resume file and optionally enters a target job title and job description.
+3. The app validates the file extension using allowed_file().
+4. The file is saved temporarily using save_upload_temporarily().
+5. The app checks whether the file content matches the file extension using file_signature_matches().
+6. Text is extracted using extract_resume_text().
+7. The temporary uploaded file is deleted after processing.
+8. The extracted text is normalized using normalize_text().
+9. The resume profile is built using extract_resume_profile().
+10. The target role match is built using build_target_job_match().
+11. Criteria scores are calculated using build_criteria_scores().
+12. Score explanations are generated using build_score_details().
+13. The total role-adjusted score is calculated using calculate_role_adjusted_score().
+14. Recommended jobs are found using find_applicable_jobs().
+15. Suggestions are generated using build_resume_suggestions().
+16. Analysis steps are generated using build_analysis_steps().
+17. Bullet rewrites are generated using rewrite_resume_bullets().
+18. The report is saved to SQLite using save_report().
+19. The result page is rendered using templates/result.html.
+
+
+5. DATABASE USAGE
+-----------------
+Database file:
+- tas_reports.db
+
+Database engine:
+- SQLite
+
+Database initialization:
+- init_db() creates required tables if they do not already exist.
+- init_db() is called when the app starts from app.py.
+- Tests also call init_db() with a temporary test database.
+
+Tables used:
+
+1. users
+Columns:
+- id: integer primary key
+- username: unique username
+- password_hash: hashed password
+
+Purpose:
+- Stores user accounts.
+- Used for registration, login, current user lookup, access control, and report ownership.
+
+Where used:
+- create_default_user() inserts a default admin user if no users exist.
+- create_user() creates a new user account.
+- get_user() retrieves a user by username.
+- get_current_user() reads the username from the Flask session and returns user details.
+- login() checks credentials using the users table.
+- register() creates users after validation.
+- admin_required() checks whether the current user is the configured admin.
+- get_accessible_user_ids() uses users to decide which reports a user can access.
+
+2. reports
+Columns:
+- id: integer primary key
+- user_id: owner of the report; can be null for anonymous scans
+- filename: original uploaded filename
+- uploaded_at: UTC timestamp when report was saved
+- score: total TAS score
+- matched_jobs: JSON text containing recommended jobs and match information
+- criteria: JSON text containing category-wise scores
+- suggestions: JSON text containing improvement suggestions
+- analysis: JSON text containing extracted profile details, score explanations, scoring weights, analysis steps, and bullet rewrites
+
+Purpose:
+- Stores resume scan results for history and report export.
+- It allows logged-in users to revisit previous scans.
+
+Where used:
+- save_report() inserts a new resume scan result.
+- get_latest_score() retrieves the user's most recent score for comparison.
+- history() loads recent reports and builds dashboard statistics.
+- get_report_payload() retrieves a full report for detail view and PDF export.
+- normalize_report_payload() converts stored JSON text back into Python data structures.
+- report_lines() converts report data into text lines for PDF export.
+- export_report_pdf() generates a downloadable PDF from stored report data.
+- admin() counts reports for dashboard summary.
+- ensure_report_columns() and ensure_reports_user_scope() migrate older report tables by adding missing columns.
+- assign_legacy_reports_to_default_user() assigns old reports without user_id to a default user.
+
+3. contacts
+Columns:
+- id: integer primary key
+- name: contact person's name
+- email: contact email
+- subject: optional subject
+- message: submitted message
+- created_at: UTC timestamp
+
+Purpose:
+- Stores contact/support messages submitted from the contact page.
+
+Where used:
+- save_contact_submission() inserts contact form data.
+- contact() validates form input and saves submissions.
+- admin() displays the latest contact submissions.
+
+Why JSON is stored in SQLite:
+- matched_jobs, criteria, suggestions, and analysis contain nested structures such as lists and dictionaries.
+- SQLite does not require a complex schema for these flexible report details.
+- The app serializes these values using json.dumps() before saving and restores them using json.loads() through parse_report_payload().
+
+Privacy and runtime behavior:
+- Uploaded resumes are temporary and deleted after text extraction.
+- The original resume file is not permanently stored.
+- The database stores extracted analysis results, not the uploaded file itself.
+- tas_reports.db is treated as a runtime file because it may contain private user data.
+
+
+6. ROUTES AND PAGE RESPONSIBILITIES
+-----------------------------------
+/  GET and POST
+Function: index()
+Purpose:
+- GET renders the resume upload page.
+- POST handles resume upload, parsing, scoring, matching, saving, and result rendering.
+
+/analyze  POST
+Function: analyze()
+Purpose:
+- Alias route that calls index() for resume analysis.
+
+/login  GET and POST
+Function: login()
+Purpose:
+- Shows login page.
+- Verifies username and password.
+- Stores username in the Flask session after successful login.
+
+/register  GET and POST
+Function: register()
+Purpose:
+- Shows registration page.
+- Validates username and password.
+- Creates a user with a hashed password.
+
+/logout  GET
+Function: logout()
+Purpose:
+- Removes the user from the session and redirects home.
+
+/contact  GET and POST
+Function: contact()
+Purpose:
+- Shows contact form.
+- Validates name, email, subject, and message.
+- Saves valid messages in the contacts table.
+
+/about  GET
+Function: about()
+Purpose:
+- Renders the about page.
+
+/history  GET
+Function: history()
+Decorators:
+- login_required
+Purpose:
+- Shows recent saved reports for the logged-in user.
+- Builds dashboard metrics like total scans, average score, best score, and trend scores.
+
+/history/<report_id>  GET
+Function: history_detail(report_id)
+Decorators:
+- login_required
+Purpose:
+- Shows detailed saved report data for a specific report.
+
+/history/<report_id>/export.pdf  GET
+Function: export_report_pdf(report_id)
+Decorators:
+- login_required
+Purpose:
+- Creates and returns a downloadable PDF report.
+
+/admin  GET and POST
+Function: admin()
+Decorators:
+- admin_required
+- rate_limit
+Purpose:
+- GET shows admin dashboard, contact messages, job catalog, report count, and user count.
+- POST adds a new job role to job_data.csv.
+
+
+7. SCORING SYSTEM
+-----------------
+The resume is scored across ten categories:
+
+1. Contact Information
+Checks whether the resume has email, phone, LinkedIn, GitHub, or portfolio signals.
+
+2. Professional Summary
+Checks for summary or objective-style indicators.
+
+3. Work Experience
+Checks for bullet points, action verbs, years of experience, and measurable impact.
+
+4. Education
+Checks for education-related terms such as bachelor, master, degree, university, college, diploma, and related signals.
+
+5. Skills
+Uses SKILL_SYNONYMS to detect technical and soft skills, including Python, SQL, pandas, Excel, Flask, JavaScript, machine learning, API development, Git, HTML, CSS, communication, leadership, and testing.
+
+6. TAS Optimization
+Checks resume length, bullet usage, and whether the format is likely readable by a TAS.
+
+7. Consistency
+Checks consistency signals such as date formatting and bullet usage.
+
+8. Proofreading
+Checks common typos such as "teh", "recieve", "acheive", "managment", and similar mistakes.
+
+9. File Format
+Scores based on the uploaded extension. PDF, DOCX, and TXT are supported.
+
+10. Relevance
+Compares resume text with the target job title and description if provided.
+
+Total score:
+- calculate_weighted_score() uses the default SCORING_WEIGHTS.
+- calculate_role_adjusted_score() adjusts category weights based on target role.
+- scoring_weights_for_role() applies role-specific overrides for roles like Data Analyst, Software Engineer, Developer, Product Manager, and Technical Writer.
+
+Example:
+- For a Data Analyst role, Skills and Relevance receive more weight because technical and role-specific keyword alignment are especially important.
+
+
+8. JOB MATCHING SYSTEM
+----------------------
+The app uses two types of job matching:
+
+1. Target role matching:
+- If the user enters a job title or job description, build_target_job_match() builds a match object.
+- It extracts keywords from the title and description.
+- It expands known titles using ROLE_KEYWORD_HINTS.
+- It identifies matched and missing keywords.
+- It calculates a match score.
+
+2. Catalog role matching:
+- find_applicable_jobs() reads job_data.csv using load_job_data().
+- Each catalog job has a title, keywords, and description.
+- The app compares resume text and extracted profile data with each job.
+- It returns ranked job recommendations.
+
+Similarity methods:
+- tokenize_for_similarity() tokenizes text into useful words.
+- build_weighted_terms() gives stronger weight to important terms.
+- weighted_cosine_similarity() compares weighted term counters.
+- cosine_similarity() provides a simpler token-list comparison.
+- keyword_found_in_text() checks whether a keyword appears in normalized text.
+
+
+9. RESUME IMPROVEMENT FEATURES
+------------------------------
+Suggestions:
+- build_resume_suggestions() looks at weak categories, missing keywords, weak verbs, and profile gaps.
+- It returns practical suggestions for improving the resume.
+
+Analysis steps:
+- build_analysis_steps() produces a short explanation of what the system did:
+  1. Parsed Resume
+  2. Checked TAS Signals
+  3. Compared Target Role
+  4. Generated Fixes
+
+Bullet rewrites:
+- extract_improvable_bullets() finds bullets that are weak or lack measurable impact.
+- rewrite_resume_bullets() suggests stronger rewritten versions using action-oriented language.
+
+PDF export:
+- report_lines() formats saved report data as text.
+- build_simple_pdf() creates a minimal PDF file directly in Python.
+- export_report_pdf() returns that PDF to the browser.
+
+
+10. SECURITY AND VALIDATION
+---------------------------
+File upload security:
+- allowed_file() restricts uploads to PDF, DOCX, and TXT.
+- secure_filename() sanitizes the original filename.
+- save_upload_temporarily() saves the file under a UUID name.
+- file_signature_matches() checks the file header to reject mismatched extensions.
+- Uploaded files are deleted after analysis.
+- MAX_CONTENT_LENGTH limits uploads to 10 MB.
+
+Authentication:
+- Passwords are stored as hashes using Werkzeug.
+- check_password_hash() validates login credentials.
+- Flask sessions store the logged-in username.
+
+CSRF protection:
+- csrf_token() creates a token stored in the session.
+- inject_csrf_token() makes the token available to templates.
+- protect_from_csrf() validates POST, PUT, PATCH, and DELETE requests.
+- CSRF can be disabled for tests using DISABLE_CSRF=1 or test config.
+
+Rate limiting:
+- rate_limit() limits repeated POST requests by route and client IP.
+- Used on login, register, contact, index, and admin routes.
+- RATE_LIMITS is an in-memory dictionary.
+
+Access control:
+- login_required() protects history and export pages.
+- admin_required() protects the admin dashboard.
+- get_accessible_user_ids() ensures users only access allowed reports.
+
+Input validation:
+- Email format is validated using EMAIL_PATTERN.
+- Contact form and target description length are limited.
+- Admin catalog fields are length-limited.
+
+
+11. FUNCTION-BY-FUNCTION EXPLANATION
+------------------------------------
+Database and persistence functions:
+
+init_db()
+Creates the users, reports, and contacts tables. Also creates a default admin user, applies lightweight migrations, and assigns older reports to a default user when needed.
+
+create_default_user(conn)
+Creates the first admin user with username admin and password Password123! if no users exist.
+
+get_primary_history_user_row(conn)
+Finds the main user used for report history, preferring a non-admin user if one exists.
+
+parse_report_payload(value, fallback)
+Parses JSON stored in the database. If JSON parsing fails, it tries literal_eval for older stored formats.
+
+summarize_matched_jobs(matched_jobs_value)
+Creates a comma-separated summary of matched job titles for the history table.
+
+get_accessible_user_ids(conn, current_user_id)
+Returns user IDs whose reports the current user can access.
+
+save_report(...)
+Stores a resume scan result in the reports table. Complex fields are serialized as JSON.
+
+save_contact_submission(...)
+Stores a contact form message in the contacts table.
+
+get_latest_score(user_id)
+Retrieves the most recent score for the current user, used to compare the new score with the previous one.
+
+get_user(username)
+Reads a user from the users table.
+
+get_current_user()
+Reads the current username from the session and returns the database user record.
+
+create_user(username, password)
+Creates a user with a hashed password. Returns false if the username already exists.
+
+ensure_report_columns(conn)
+Adds missing suggestions and analysis columns to older report tables.
+
+ensure_reports_user_scope(conn)
+Adds user_id to older report tables if missing.
+
+assign_legacy_reports_to_default_user(conn)
+Assigns older reports with no user_id to a default primary user.
+
+normalize_report_payload(row)
+Converts a database report row into a clean dictionary for templates and PDF export.
+
+get_report_payload(report_id, user_id)
+Retrieves one report if the current user is allowed to access it.
+
+Job data and matching functions:
+
+load_job_data()
+Loads job_data.csv. If it does not exist, creates it with default jobs.
+
+tokenize_for_similarity(text)
+Converts text into normalized tokens for similarity comparison.
+
+build_weighted_terms(text)
+Builds a weighted counter of important terms from text.
+
+infer_role_keywords(title)
+Uses ROLE_KEYWORD_HINTS to infer keywords from common role titles.
+
+keyword_found_in_text(keyword, normalized_text)
+Checks whether a keyword appears in resume text.
+
+weighted_cosine_similarity(left, right)
+Computes similarity between two weighted term counters.
+
+cosine_similarity(left_tokens, right_tokens)
+Computes a simpler cosine similarity from token lists.
+
+build_target_job_match(text, title, description)
+Builds a match result for the user's target job title and description.
+
+find_applicable_jobs(text, profile, target_job)
+Compares the resume against job_data.csv and returns recommended jobs.
+
+File handling and extraction functions:
+
+allowed_file(filename)
+Checks whether the uploaded file extension is allowed.
+
+file_signature_matches(path, extension)
+Checks the actual file header to verify that a file matches its extension.
+
+save_upload_temporarily(uploaded_file, original_filename, user_id)
+Saves the uploaded file in a temporary user-specific folder.
+
+extract_text_from_pdf(path)
+Extracts text from selectable-text PDF files.
+
+extract_text_with_ocr(path)
+Uses OCR to extract text from scanned PDFs when optional OCR tools are installed.
+
+extract_text_from_docx(path)
+Extracts text from DOCX paragraphs and tables.
+
+extract_resume_text(path, extension)
+Chooses the correct extraction method based on file extension.
+
+Text analysis and scoring functions:
+
+normalize_text(text)
+Lowercases and collapses whitespace for easier matching.
+
+alias_in_text(text, alias)
+Checks exact alias matches without accidentally matching inside unrelated words.
+
+extract_resume_profile(raw_text)
+Builds a profile containing detected skills, entities, experience years, action verbs, weak verbs, education terms, and word count.
+
+detect_contact_info(text)
+Scores contact information.
+
+explain_contact_info(text, score)
+Explains the contact information score.
+
+detect_summary(text)
+Scores professional summary signals.
+
+explain_summary(text, score)
+Explains the summary score.
+
+detect_experience(text, profile)
+Scores work experience signals.
+
+explain_experience(text, profile, score)
+Explains the work experience score.
+
+detect_education(text)
+Scores education signals.
+
+explain_education(text, score)
+Explains the education score.
+
+detect_skills(text, profile)
+Scores detected skills.
+
+explain_skills(text, profile, score)
+Explains the skills score.
+
+detect_tas_optimization(text)
+Scores TAS readability and formatting signals.
+
+explain_tas_optimization(text, score)
+Explains the TAS optimization score.
+
+detect_consistency(text)
+Scores consistency signals.
+
+explain_consistency(text, score)
+Explains the consistency score.
+
+detect_proofreading(text)
+Scores proofreading by checking common typos.
+
+explain_proofreading(text, score)
+Explains proofreading results.
+
+detect_relevance(text, target_text)
+Scores relevance to the target job text.
+
+explain_relevance(text, target_text, score)
+Explains relevance to target job text.
+
+build_criteria_scores(text, extension, profile, target_text)
+Runs all scoring functions and returns the category-wise scores.
+
+build_score_details(criteria_scores, text, extension, profile, target_text)
+Builds human-readable explanations for every score category.
+
+calculate_weighted_score(criteria_scores)
+Calculates the default weighted score out of 100.
+
+scoring_weights_for_role(target_title)
+Returns role-adjusted scoring weights.
+
+calculate_role_adjusted_score(criteria_scores, target_title)
+Calculates the final score using role-specific weights.
+
+build_analysis_steps(criteria_scores, matched_jobs, profile, target_title)
+Creates a short timeline explaining the analysis process.
+
+extract_improvable_bullets(raw_text)
+Finds resume bullets that could be improved.
+
+rewrite_resume_bullets(raw_text, target_title)
+Generates stronger bullet rewrite suggestions.
+
+text_contains_alias(text, alias)
+Wrapper around alias_in_text() for keyword matching.
+
+build_resume_suggestions(criteria_scores, matched_jobs, profile, text)
+Generates final improvement suggestions for the user.
+
+Utility and security functions:
+
+compact_reason(reason, limit)
+Shortens long explanation text.
+
+count_bullet_markers(text)
+Counts bullet markers in resume text.
+
+utc_now()
+Returns the current UTC datetime.
+
+utc_timestamp()
+Returns a UTC timestamp string.
+
+client_key()
+Gets the client IP address for rate limiting.
+
+rate_limit(limit, seconds)
+Decorator that limits repeated POST requests.
+
+csrf_token()
+Creates or returns the CSRF token stored in the session.
+
+inject_csrf_token()
+Makes csrf_token available inside templates.
+
+protect_from_csrf()
+Validates CSRF tokens before unsafe HTTP requests.
+
+escape_pdf_text(value)
+Escapes characters that need special handling inside PDF text.
+
+build_simple_pdf(lines)
+Builds a simple PDF document from text lines.
+
+report_lines(payload)
+Converts report payload data into lines for PDF export.
+
+login_required(view_func)
+Decorator requiring a logged-in user.
+
+admin_required(view_func)
+Decorator requiring the configured admin user.
+
+Route functions:
+
+login()
+Handles user login.
+
+register()
+Handles user registration.
+
+logout()
+Logs out the current user.
+
+contact()
+Handles contact form display and submission.
+
+about()
+Renders the about page.
+
+index()
+Main route for displaying the upload form and processing resume scans.
+
+analyze()
+POST alias for index().
+
+history()
+Shows saved scan history.
+
+history_detail(report_id)
+Shows one saved report.
+
+export_report_pdf(report_id)
+Downloads a saved report as PDF.
+
+admin()
+Shows admin dashboard and handles adding job catalog roles.
+
+
+12. TESTING SUMMARY
+-------------------
+The test suite uses pytest and Flask's test client.
+
+Important tests:
+- allowed_file() accepts PDF, DOCX, and TXT and rejects invalid extensions.
+- build_target_job_match() detects matched and missing keywords.
+- Role title hints work for full stack developer.
+- Skill extraction detects aliases like ML, REST APIs, Git, and responsive design.
+- Role-adjusted scoring changes weighting for Data Analyst.
+- CSRF blocks POST requests when enabled.
+- Resume TXT upload saves report and deletes temporary upload.
+- Bullet rewrites are generated.
+- Mismatched file extensions are rejected.
+- Contact form rejects invalid email.
+- Register, login, history, detail view, and PDF export work.
+- Admin can add a new catalog role.
+
+Latest validation:
+- python -m pytest
+- Result: 12 tests passed.
+
+
+13. HOW TO EXPLAIN THIS PROJECT IN A MEETING
+--------------------------------------------
+Short introduction:
+"This is a Talent Acquisition System built with Flask and SQLite. It lets users upload resumes, extracts text from PDF, DOCX, or TXT files, scores the resume using TAS-focused criteria, compares it with a target job role, recommends matching jobs, and saves reports for logged-in users."
+
+Architecture explanation:
+"The application is a server-rendered Flask app. app.py contains the backend logic, templates contain the HTML pages, static files contain CSS and JavaScript, SQLite stores users, reports, and contact messages, and job_data.csv acts as a local job catalog for recommendation matching."
+
+Database explanation:
+"The database is used for three main things: storing user accounts, storing resume scan reports, and storing contact messages. The reports table stores the score, criteria scores, matched jobs, suggestions, and deeper analysis as JSON text. This allows the history and PDF export pages to reconstruct the full report later without storing the original uploaded resume."
+
+Resume analysis explanation:
+"When a resume is uploaded, the app validates the file, extracts text, deletes the temporary upload, detects skills and resume signals, calculates category-wise scores, adjusts the final score based on the target role, finds matching jobs, generates suggestions, and saves the final report."
+
+Security explanation:
+"The app validates file extensions and file signatures, limits upload size, sanitizes filenames, deletes uploaded files after parsing, hashes passwords, uses session-based login, applies CSRF protection, and rate-limits repeated POST requests."
+
+Admin explanation:
+"The admin dashboard allows the configured admin user to view contact messages, see user and report counts, and add new roles to the job recommendation catalog."
+
+Testing explanation:
+"The project has automated pytest tests covering file validation, resume analysis, role matching, CSRF protection, authentication, report history, PDF export, and admin catalog updates."
+
+
+14. CURRENT LIMITATIONS AND FUTURE IMPROVEMENTS
+-----------------------------------------------
+Current limitations:
+- Scoring is rule-based and keyword-based, so it should be treated as guidance rather than a real TAS guarantee.
+- SQLite is suitable for a local/demo project, but a production app should use a stronger database such as PostgreSQL.
+- In-memory rate limiting works for a single process, but production should use Redis or another shared store.
+- OCR depends on external native tools, Tesseract and Poppler.
+- The job catalog is small and stored in CSV.
+
+Future improvements:
+- Use embeddings or a stronger semantic matching model for better resume/job comparison.
+- Add richer admin analytics.
+- Add email notifications for contact form submissions.
+- Move job catalog management fully into the database.
+- Add password reset and account management.
+- Add more export formats.
+- Deploy with PostgreSQL, environment-managed secrets, and production logging.
+
+
+15. FINAL ONE-MINUTE PRESENTATION VERSION
+-----------------------------------------
+"Our project is a Talent Acquisition System web application developed using Flask. The user can upload a resume in PDF, DOCX, or TXT format and optionally provide a target job title and description. The backend validates the file, extracts the resume text, analyzes contact information, summary, experience, education, skills, TAS optimization, consistency, proofreading, format, and relevance. It then calculates a role-adjusted score, recommends suitable jobs from a local catalog, identifies matched and missing keywords, gives improvement suggestions, and suggests stronger bullet rewrites.
+
+The database is SQLite, stored in tas_reports.db. It has users, reports, and contacts tables. Users are stored with hashed passwords. Reports store the score, criteria, suggestions, matched jobs, and analysis data as JSON so that users can view history and export reports as PDFs. Contact messages are stored for the admin dashboard.
+
+The app also includes login, registration, history pages, PDF export, CSRF protection, rate limiting, temporary upload deletion, and an admin panel. The project is tested with pytest, covering the main analysis flow, authentication, history, PDF export, and admin functionality."

@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Resume ATS Scanner{% endblock %}
+{% block title %}Talent Acquisition System{% endblock %}
 {% block content %}
 <main class="content-card">
   <section class="upload-panel">
     <h2>Upload Resume</h2>
     <p class="note">
-      Upload your resume and get an ATS match score, criteria breakdown, and tailored job recommendations.
+      Upload your resume and get a TAS match score, criteria breakdown, and tailored job recommendations.
     </p>
     <form method="post" enctype="multipart/form-data" id="resume-form" novalidate>
       <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}" />
