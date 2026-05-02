@@ -15,8 +15,24 @@ if (form) {
   form.addEventListener("submit", () => {
     const button = form.querySelector('button[type="submit"]');
     if (button) {
-      button.textContent = "Scanning…";
+      button.textContent = "Scanning...";
       button.disabled = true;
     }
   });
 }
+
+const passwordToggles = document.querySelectorAll("[data-toggle-password]");
+
+passwordToggles.forEach((toggle) => {
+  toggle.addEventListener("change", (event) => {
+    const selectorList = event.target.dataset.togglePassword?.split(",") || [];
+    const inputType = event.target.checked ? "text" : "password";
+
+    selectorList.forEach((selector) => {
+      const input = document.querySelector(selector.trim());
+      if (input) {
+        input.type = inputType;
+      }
+    });
+  });
+});
