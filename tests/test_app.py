@@ -77,6 +77,27 @@ def test_skill_extraction_understands_common_aliases():
     assert "css" in profile["skills"]
 
 
+def test_experience_estimate_ignores_education_only_years():
+    profile = app_module.extract_resume_profile(
+        "Education: ABC University, Bachelor of Computer Applications, 2018 - 2022. "
+        "Projects: Built Python dashboards and SQL reports."
+    )
+
+    assert profile["experience_years"] == 0
+
+
+def test_experience_estimate_uses_explicit_and_work_ranges():
+    explicit_profile = app_module.extract_resume_profile(
+        "Data Analyst with 3 years of experience building SQL dashboards."
+    )
+    range_profile = app_module.extract_resume_profile(
+        "Work Experience: Junior Developer, 2020 - 2022. Software Engineer, 2022 - 2024."
+    )
+
+    assert explicit_profile["experience_years"] == 3
+    assert range_profile["experience_years"] == 4
+
+
 def test_role_adjusted_score_changes_weighting():
     criteria = {
         "Contact Information": 10,
