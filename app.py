@@ -438,6 +438,55 @@ def alias_in_text(text: str, alias: str) -> bool:
     return re.search(rf"(?<![a-z0-9+#.-]){re.escape(alias)}(?![a-z0-9+#.-])", text) is not None
 
 
+def extract_experience_years(raw_text: str) -> int:
+    text = normalize_text(raw_text)
+    current_year = utc_now().year
+    explicit_patterns = [
+        r"\b(\d{1,2})\+?\s*(?:years|yrs)(?:\s+of)?\s+(?:work\s+)?experience\b",
+        r"\bexperience(?:\s+of|\s*:)?\s*(\d{1,2})\+?\s*(?:years|yrs)\b",
+    ]
+    for pattern in explicit_patterns:
+        match = re.search(pattern, text)
+        if match:
+            return min(int(match.group(1)), 25)
+
+    month_names = (
+        "jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        "jul(?:y)?|aug(?:ust)?|sep(?:tember)?|sept|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?"
+    )
+    date_part = rf"(?:{month_names})?\s*(?:19|20)\d{{2}}"
+    range_pattern = re.compile(
+        rf"(?P<start>{date_part})\s*(?:-|–|—|to|until)\s*(?P<end>present|current|now|{date_part})"
+    )
+    work_words = {
+        "experience", "employment", "work", "intern", "internship", "company", "developer",
+        "engineer", "analyst", "manager", "assistant", "executive", "consultant", "specialist",
+    }
+    education_words = {"education", "university", "college", "school", "degree", "bachelor", "master", "diploma"}
+    intervals = []
+    for match in range_pattern.finditer(text):
+        start_year = int(re.search(r"(?:19|20)\d{2}", match.group("start")).group(0))
+        end_text = match.group("end")
+        end_year_match = re.search(r"(?:19|20)\d{2}", end_text)
+        end_year = current_year if end_text in {"present", "current", "now"} else int(end_year_match.group(0))
+        if end_year < start_year or start_year < 1970 or end_year > current_year:
+            continue
+
+        window = text[max(0, match.start() - 80): match.end() + 80]
+        has_work_context = any(word in window for word in work_words)
+        has_education_context = any(word in window for word in education_words)
+        if has_work_context and not (has_education_context and not has_work_context):
+            intervals.append((start_year, end_year))
+
+    if not intervals:
+        return 0
+
+    covered_years = set()
+    for start_year, end_year in intervals:
+        covered_years.update(range(start_year, end_year))
+    return min(len(covered_years), 25)
+
+
 def extract_resume_profile(raw_text: str) -> dict:
     text = normalize_text(raw_text)
     doc = NLP(raw_text) if NLP else None
@@ -454,16 +503,6 @@ def extract_resume_profile(raw_text: str) -> dict:
         if any(alias_in_text(text, alias) for alias in aliases):
             skills.append(canonical)
 
-    years = [int(match.group(0)) for match in YEAR_PATTERN.finditer(text)]
-    current_year = utc_now().year
-    plausible_years = [year for year in years if 1970 <= year <= current_year]
-    experience_years = 0
-    explicit_exp = re.search(r"\b(\d{1,2})\+?\s*(?:years|yrs)\b", text)
-    if explicit_exp:
-        experience_years = int(explicit_exp.group(1))
-    elif len(plausible_years) >= 2:
-        experience_years = max(0, min(current_year - min(plausible_years), 25))
-
     action_verb_hits = sorted({verb for verb in ACTION_VERBS if re.search(rf"\b{re.escape(verb)}\b", text)})
     weak_verb_hits = sorted({verb for verb in WEAK_VERBS if verb in text})
     education = sorted({
@@ -474,7 +513,7 @@ def extract_resume_profile(raw_text: str) -> dict:
     return {
         "skills": skills,
         "entities": entities,
-        "experience_years": experience_years,
+        "experience_years": extract_experience_years(raw_text),
         "action_verbs": action_verb_hits,
         "weak_verbs": weak_verb_hits,
         "education": education,
