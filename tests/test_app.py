@@ -1,4 +1,5 @@
 from io import BytesIO
+from types import SimpleNamespace
 from pathlib import Path
 from uuid import uuid4
 
@@ -145,6 +146,59 @@ def test_analyze_txt_resume_saves_report_and_deletes_temp_upload(client):
     assert b"Analysis Steps" in response.data
     assert b"Suggested Bullet Rewrites" in response.data
     assert not any(app_module.UPLOAD_FOLDER.rglob("*.txt"))
+
+
+def test_pdf_ocr_fallback_extracts_scanned_text(monkeypatch):
+    runtime_dir = Path("test_runtime") / uuid4().hex
+    runtime_dir.mkdir(parents=True)
+    pdf_path = runtime_dir / "scanned.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 scanned placeholder")
+    fake_tesseract = SimpleNamespace(image_to_string=lambda image: "Alex OCR\nPython SQL")
+
+    monkeypatch.setattr(app_module, "extract_text_from_pdf", lambda path: "")
+    monkeypatch.setattr(app_module, "convert_from_path", lambda *args, **kwargs: ["page-image"])
+    monkeypatch.setattr(app_module, "pytesseract", fake_tesseract)
+    monkeypatch.setattr(app_module, "tesseract_is_available", lambda: True)
+    monkeypatch.setattr(app_module, "poppler_is_available", lambda: True)
+
+    assert app_module.extract_resume_text(pdf_path, "pdf") == "Alex OCR\nPython SQL"
+    assert app_module.LAST_OCR_ERROR == ""
+
+
+def test_pdf_ocr_failure_explains_missing_poppler(monkeypatch):
+    runtime_dir = Path("test_runtime") / uuid4().hex
+    runtime_dir.mkdir(parents=True)
+    pdf_path = runtime_dir / "scanned.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 scanned placeholder")
+    fake_tesseract = SimpleNamespace(image_to_string=lambda image: "")
+
+    monkeypatch.setattr(app_module, "extract_text_from_pdf", lambda path: "")
+    monkeypatch.setattr(app_module, "convert_from_path", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("poppler missing")))
+    monkeypatch.setattr(app_module, "pytesseract", fake_tesseract)
+    monkeypatch.setattr(app_module, "tesseract_is_available", lambda: True)
+    monkeypatch.setattr(app_module, "poppler_is_available", lambda: True)
+
+    assert app_module.extract_resume_text(pdf_path, "pdf") == ""
+    assert "Poppler" in app_module.unreadable_resume_message("pdf")
+
+
+def test_pdf_ocr_preflight_reports_missing_native_tools(monkeypatch):
+    monkeypatch.setattr(app_module, "pytesseract", SimpleNamespace(pytesseract=SimpleNamespace(tesseract_cmd="tesseract")))
+    monkeypatch.setattr(app_module, "convert_from_path", lambda *args, **kwargs: [])
+    monkeypatch.setattr(app_module.shutil, "which", lambda command: None)
+    monkeypatch.setattr(app_module, "COMMON_TESSERACT_PATHS", [])
+
+    assert "Tesseract OCR" in app_module.ocr_unavailable_message()
+
+
+def test_pdf_ocr_preflight_names_missing_python_packages(monkeypatch):
+    monkeypatch.setattr(app_module, "pytesseract", None)
+    monkeypatch.setattr(app_module, "convert_from_path", None)
+
+    message = app_module.ocr_unavailable_message()
+
+    assert "pytesseract" in message
+    assert "pdf2image" in message
 
 
 def test_rewrite_resume_bullets_generates_local_fix():

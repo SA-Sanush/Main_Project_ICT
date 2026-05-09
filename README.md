@@ -26,3 +26,22 @@ A Flask web app that scans resumes, scores them against common TAS criteria, com
 - spaCy, optional model support
 - Local canvas chart rendering
 - Optional pytesseract and pdf2image OCR support
+
+## OCR for Scanned PDFs
+
+The app can analyze scanned/image-based PDFs when OCR is installed.
+
+Install the Python packages from `requirements.txt`, then install these system tools:
+
+- Tesseract OCR
+- Poppler
+
+If they are not available on your system `PATH`, set:
+
+```powershell
+$env:TESSERACT_CMD="C:\Program Files\Tesseract-OCR\tesseract.exe"
+$env:POPPLER_PATH="C:\path\to\poppler\Library\bin"
+python app.py
+```
+
+Normal selectable-text PDFs, DOCX, and TXT files do not need OCR.

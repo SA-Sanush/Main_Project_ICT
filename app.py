@@ -3,6 +3,7 @@ import re
 import csv
 import json
 import math
+import shutil
 import sqlite3
 import secrets
 import traceback
@@ -13,7 +14,6 @@ from datetime import datetime, timezone
 from functools import wraps
 from io import BytesIO
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, flash, session, abort, Response
@@ -35,12 +35,19 @@ try:
 except ImportError:  # Optional until python-docx is installed.
     Document = None
 
+OCR_IMPORT_ERRORS: dict[str, str] = {}
+
 try:
     import pytesseract
-    from pdf2image import convert_from_path
-except ImportError:  # OCR is optional because it needs native Poppler/Tesseract binaries.
+except ImportError as exc:  # OCR is optional because it needs native Tesseract binaries.
     pytesseract = None
+    OCR_IMPORT_ERRORS["pytesseract"] = str(exc)
+
+try:
+    from pdf2image import convert_from_path
+except ImportError as exc:  # OCR is optional because it needs native Poppler binaries.
     convert_from_path = None
+    OCR_IMPORT_ERRORS["pdf2image"] = str(exc)
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = BASE_DIR / "uploads"
@@ -50,6 +57,82 @@ DB_PATH = BASE_DIR / "tas_reports.db"
 ALLOWED_EXTENSIONS = {"pdf", "txt", "docx"}
 RATE_LIMITS: dict[tuple[str, str], list[float]] = {}
 _DB_READY = False
+LAST_OCR_ERROR = ""
+
+COMMON_TESSERACT_PATHS = [
+    Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe"),
+    Path(r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+]
+COMMON_POPPLER_PATHS = [
+    Path(r"C:\Program Files\poppler\Library\bin"),
+    Path(r"C:\Program Files\poppler\bin"),
+]
+
+
+def path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def configured_tesseract_path() -> str:
+    if pytesseract is None:
+        return ""
+    candidates = [
+        os.environ.get("TESSERACT_CMD", ""),
+        getattr(pytesseract.pytesseract, "tesseract_cmd", ""),
+        *(str(path) for path in COMMON_TESSERACT_PATHS),
+    ]
+    for candidate in candidates:
+        if candidate and path_exists(Path(candidate)):
+            return candidate
+    found = shutil.which("tesseract")
+    return found or ""
+
+
+def configure_tesseract_command() -> None:
+    if pytesseract is None:
+        return
+    command = configured_tesseract_path()
+    if command:
+        pytesseract.pytesseract.tesseract_cmd = command
+
+
+configure_tesseract_command()
+
+
+def winget_poppler_paths() -> list[Path]:
+    package_root = Path.home() / "AppData" / "Local" / "Microsoft" / "WinGet" / "Packages"
+    if not path_exists(package_root):
+        return []
+    try:
+        package_dirs = list(package_root.glob("oschwartz10612.Poppler_*"))
+    except OSError:
+        return []
+    paths: list[Path] = []
+    for package_dir in package_dirs:
+        try:
+            paths.extend(package_dir.glob("poppler-*/*/bin"))
+        except OSError:
+            continue
+    return paths
+
+
+def configured_poppler_path() -> str:
+    candidates = [
+        os.environ.get("POPPLER_PATH", ""),
+        *(str(path) for path in COMMON_POPPLER_PATHS),
+        *(str(path) for path in winget_poppler_paths()),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate_path = Path(candidate)
+        if path_exists(candidate_path / "pdftoppm.exe") or path_exists(candidate_path / "pdftoppm"):
+            return candidate
+    found = shutil.which("pdftoppm")
+    return str(Path(found).parent) if found else ""
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -405,14 +488,101 @@ def extract_text_from_pdf(path: Path) -> str:
     return "\n".join(text_parts)
 
 
-def extract_text_with_ocr(path: Path) -> str:
+def ocr_unavailable_message() -> str:
     if pytesseract is None or convert_from_path is None:
+        missing_packages = []
+        if pytesseract is None:
+            missing_packages.append("pytesseract")
+        if convert_from_path is None:
+            missing_packages.append("pdf2image")
+        package_list = " and ".join(missing_packages)
+        return (
+            f"OCR Python package{'s are' if len(missing_packages) > 1 else ' is'} missing: "
+            f"{package_list}. Install the missing package{'s' if len(missing_packages) > 1 else ''} "
+            "with pip, then install the Tesseract OCR and Poppler system tools."
+        )
+    if not tesseract_is_available():
+        return (
+            "Tesseract OCR is not installed or not on PATH. Install Tesseract OCR, "
+            "or set TESSERACT_CMD to the full path of tesseract.exe."
+        )
+    if not poppler_is_available():
+        return (
+            "Poppler is not installed or not on PATH. Install Poppler, or set "
+            "POPPLER_PATH to the folder that contains pdftoppm.exe."
+        )
+    return ""
+
+
+def tesseract_is_available() -> bool:
+    if pytesseract is None:
+        return False
+    configured = configured_tesseract_path()
+    if configured:
+        pytesseract.pytesseract.tesseract_cmd = configured
+        return True
+    return False
+
+
+def poppler_is_available() -> bool:
+    return bool(configured_poppler_path())
+
+
+def extract_text_with_ocr(path: Path) -> str:
+    global LAST_OCR_ERROR
+    LAST_OCR_ERROR = ""
+    unavailable = ocr_unavailable_message()
+    if unavailable:
+        LAST_OCR_ERROR = unavailable
         return ""
+
+    convert_options = {
+        "dpi": 220,
+        "first_page": 1,
+        "last_page": 5,
+    }
+    poppler_path = configured_poppler_path()
+    if poppler_path:
+        convert_options["poppler_path"] = poppler_path
+
     try:
-        images = convert_from_path(str(path), dpi=180, first_page=1, last_page=5)
-        return "\n".join(pytesseract.image_to_string(image) for image in images)
-    except Exception:
+        images = convert_from_path(str(path), **convert_options)
+    except Exception as exc:
+        LAST_OCR_ERROR = (
+            "OCR could not convert the scanned PDF pages into images. Install Poppler "
+            "and set POPPLER_PATH to its bin folder if it is not on PATH. "
+            f"Details: {exc}"
+        )
         return ""
+
+    text_parts = []
+    try:
+        for image in images:
+            text_parts.append(pytesseract.image_to_string(image))
+    except Exception as exc:
+        LAST_OCR_ERROR = (
+            "OCR could not read text from the scanned PDF images. Install Tesseract OCR "
+            "and set TESSERACT_CMD to tesseract.exe if it is not on PATH. "
+            f"Details: {exc}"
+        )
+        return ""
+
+    return "\n".join(text_parts)
+
+
+def unreadable_resume_message(extension: str) -> str:
+    if extension == "pdf" and LAST_OCR_ERROR:
+        return f"Unable to parse readable text from this scanned PDF. {compact_reason(LAST_OCR_ERROR, 260)}"
+    if pytesseract is None or convert_from_path is None:
+        return (
+            "Unable to parse readable text from the resume. If this is a scanned PDF, "
+            "install OCR support or export it as DOCX/PDF with selectable text."
+        )
+    return (
+        "Unable to parse readable text from the resume. If this is a scanned PDF, "
+        "make sure Tesseract OCR and Poppler are installed correctly, or export it "
+        "as DOCX/PDF with selectable text."
+    )
 
 
 def extract_text_from_docx(path: Path) -> str:
@@ -1357,7 +1527,7 @@ def index():
             extracted_text = extract_resume_text(save_path, file_ext)
 
             if not extracted_text.strip():
-                flash("Unable to parse readable text from the resume. If this is a scanned PDF, install OCR support or export it as DOCX/PDF with selectable text.", "error")
+                flash(unreadable_resume_message(file_ext), "error")
                 return redirect(url_for("index"))
 
             text = normalize_text(extracted_text)
