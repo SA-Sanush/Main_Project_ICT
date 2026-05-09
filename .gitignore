@@ -12,3 +12,6 @@ static/images/score_chart.png
 test_runtime/
 pytest-cache-files-*/
 htmlcov/
+
+# Microsoft Office temporary lock files
+~$*
