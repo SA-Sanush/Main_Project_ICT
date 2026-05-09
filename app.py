@@ -49,6 +49,7 @@ JOB_DATA_PATH = BASE_DIR / "job_data.csv"
 DB_PATH = BASE_DIR / "tas_reports.db"
 ALLOWED_EXTENSIONS = {"pdf", "txt", "docx"}
 RATE_LIMITS: dict[tuple[str, str], list[float]] = {}
+_DB_READY = False
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
@@ -201,6 +202,7 @@ def init_db() -> None:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS contacts ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "user_id INTEGER,"
             "name TEXT,"
             "email TEXT,"
             "subject TEXT,"
@@ -212,13 +214,16 @@ def init_db() -> None:
             "CREATE TABLE IF NOT EXISTS users ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "username TEXT UNIQUE,"
-            "password_hash TEXT"
+            "password_hash TEXT,"
+            "created_at TEXT"
             ")"
         )
         conn.commit()
-        create_default_user(conn)
+        ensure_user_columns(conn)
+        ensure_contact_columns(conn)
         ensure_report_columns(conn)
         ensure_reports_user_scope(conn)
+        create_default_user(conn)
         assign_legacy_reports_to_default_user(conn)
     finally:
         conn.close()
@@ -229,8 +234,8 @@ def create_default_user(conn: sqlite3.Connection) -> None:
     if cursor.fetchone() is None:
         password_hash = generate_password_hash("Password123!")
         conn.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            ("admin", password_hash),
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            ("admin", password_hash, utc_timestamp()),
         )
         conn.commit()
 
@@ -977,12 +982,12 @@ def save_report(
         conn.close()
 
 
-def save_contact_submission(name: str, email: str, subject: str, message: str) -> None:
+def save_contact_submission(user_id: int | None, name: str, email: str, subject: str, message: str) -> None:
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
-            "INSERT INTO contacts (name, email, subject, message, created_at) VALUES (?, ?, ?, ?, ?)",
-            (name, email, subject, message, utc_timestamp()),
+            "INSERT INTO contacts (user_id, name, email, subject, message, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, name, email, subject, message, utc_timestamp()),
         )
         conn.commit()
     finally:
@@ -1028,8 +1033,8 @@ def create_user(username: str, password: str) -> bool:
     conn = sqlite3.connect(DB_PATH)
     try:
         conn.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (username, generate_password_hash(password)),
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            (username, generate_password_hash(password), utc_timestamp()),
         )
         conn.commit()
         return True
@@ -1037,6 +1042,20 @@ def create_user(username: str, password: str) -> bool:
         return False
     finally:
         conn.close()
+
+
+def ensure_user_columns(conn: sqlite3.Connection) -> None:
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+    if "created_at" not in columns:
+        conn.execute("ALTER TABLE users ADD COLUMN created_at TEXT")
+    conn.commit()
+
+
+def ensure_contact_columns(conn: sqlite3.Connection) -> None:
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(contacts)").fetchall()]
+    if "user_id" not in columns:
+        conn.execute("ALTER TABLE contacts ADD COLUMN user_id INTEGER")
+    conn.commit()
 
 
 def ensure_report_columns(conn: sqlite3.Connection) -> None:
@@ -1062,6 +1081,20 @@ def assign_legacy_reports_to_default_user(conn: sqlite3.Connection) -> None:
             (primary_row[0],),
         )
         conn.commit()
+
+
+def ensure_runtime_initialized() -> None:
+    global _DB_READY
+    if _DB_READY:
+        return
+    init_db()
+    load_job_data()
+    _DB_READY = True
+
+
+@app.before_request
+def initialize_runtime_on_request() -> None:
+    ensure_runtime_initialized()
 
 
 def normalize_report_payload(row) -> dict | None:
@@ -1281,7 +1314,8 @@ def contact():
         if any(len(value) > MAX_TEXT_INPUT_LENGTH for value in [name, email, subject, message]):
             flash("Please keep contact fields under 5,000 characters.", "error")
             return redirect(url_for("contact"))
-        save_contact_submission(name, email, subject, message)
+        current_user = get_current_user()
+        save_contact_submission(current_user["id"] if current_user else None, name, email, subject, message)
         flash("Your message has been sent. You will be contacted shortly.", "success")
         return redirect(url_for("contact"))
     return render_template("contact.html")
@@ -1474,7 +1508,9 @@ def admin():
     conn = sqlite3.connect(DB_PATH)
     try:
         contacts = conn.execute(
-            "SELECT name, email, subject, message, created_at FROM contacts ORDER BY created_at DESC LIMIT 20"
+            "SELECT contacts.name, contacts.email, contacts.subject, contacts.message, contacts.created_at, users.username "
+            "FROM contacts LEFT JOIN users ON contacts.user_id = users.id "
+            "ORDER BY contacts.created_at DESC LIMIT 20"
         ).fetchall()
         report_count = conn.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
         user_count = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -1491,8 +1527,7 @@ def admin():
 
 
 if __name__ == "__main__":
-    init_db()
-    load_job_data()
+    ensure_runtime_initialized()
     app.run(
         debug=os.environ.get("FLASK_DEBUG") == "1",
         host=os.environ.get("FLASK_RUN_HOST", "127.0.0.1"),

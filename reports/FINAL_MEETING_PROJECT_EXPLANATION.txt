@@ -1,0 +1,639 @@
+FINAL MEETING PROJECT EXPLANATION
+Talent Acquisition System
+================================
+
+1. PROJECT TITLE
+----------------
+Talent Acquisition System
+
+This project is a web-based resume analysis and job matching system. It helps users upload a resume, analyze its quality, compare it with a target job role, receive a score, view improvement suggestions, and save analysis history for later review.
+
+
+2. PROJECT OVERVIEW
+-------------------
+The Talent Acquisition System is built as a Flask web application. The main goal of the project is to support job seekers and recruiters by giving a structured evaluation of resumes.
+
+In a real recruitment process, resumes are often screened by Talent Acquisition Systems or Applicant Tracking Systems. These systems search for important resume sections, keywords, skills, education details, work experience, formatting quality, and relevance to the job description. This project simulates that process and gives the user clear feedback about how strong their resume is.
+
+The user can upload a resume in PDF, DOCX, or TXT format. The system extracts the text, checks the resume against several scoring criteria, identifies skills, compares the resume with job keywords, recommends suitable job roles, and gives suggestions for improvement. If the user is logged in, the report is saved in the database and can be viewed later from the history page.
+
+The application also includes registration, login, contact form, admin dashboard, job catalog management, report history, and PDF report export.
+
+
+3. PROBLEM STATEMENT
+--------------------
+Many candidates do not know why their resumes are rejected or why they do not pass automated screening systems. A resume may be visually good, but it may still miss important keywords, lack measurable achievements, have weak bullet points, or not match the target job description.
+
+The problem this project solves is:
+- Candidates need a simple way to evaluate resume quality.
+- Candidates need feedback before applying for jobs.
+- Recruiters or administrators need a manageable catalog of roles and keywords.
+- Users need a history of previous scans to track improvement.
+- Resume feedback should be understandable and actionable.
+
+
+4. OBJECTIVES
+-------------
+The main objectives of the project are:
+
+1. To allow users to upload resumes in common formats.
+2. To extract readable text from PDF, DOCX, and TXT files.
+3. To score resumes based on professional resume quality criteria.
+4. To compare resumes with a selected or entered target job role.
+5. To recommend matching job roles from a local job catalog.
+6. To show matched and missing keywords.
+7. To generate improvement suggestions and bullet rewrite suggestions.
+8. To store scan history for logged-in users.
+9. To allow users to export saved reports as PDF.
+10. To provide an admin dashboard for contact messages and job catalog updates.
+11. To include validation and security measures such as password hashing, CSRF protection, file type checking, and rate limiting.
+
+
+5. TECHNOLOGY STACK
+-------------------
+Backend:
+- Python is the main programming language.
+- Flask is used as the backend web framework.
+- Flask handles routes, forms, sessions, page rendering, redirects, flash messages, and HTTP responses.
+
+Database:
+- SQLite is used as the database.
+- The database file is tas_reports.db.
+- Python's built-in sqlite3 module is used for database operations.
+
+Frontend:
+- HTML templates are stored in the templates folder.
+- Jinja2 is used to render dynamic data in HTML pages.
+- CSS is stored in static/css/style.css.
+- JavaScript is stored in static/js/app.js.
+
+Data processing:
+- pandas is used to read and update the job catalog CSV file.
+- numpy is used for numeric handling and score calculations.
+
+Resume parsing:
+- pypdf is used to extract text from PDF files.
+- python-docx is used to extract text from DOCX files.
+- TXT files are read directly.
+- pytesseract and pdf2image are optionally supported for OCR on scanned PDFs.
+
+Natural language processing:
+- spaCy is optionally used for entity extraction.
+- If the spaCy model is not available, the app still works using rule-based analysis.
+
+Security utilities:
+- Werkzeug is used for password hashing and filename sanitization.
+- secrets is used for secure tokens.
+- uuid is used to create safe temporary upload filenames.
+
+Testing:
+- pytest is used for automated testing.
+
+
+6. PROJECT STRUCTURE
+--------------------
+Important files and folders:
+
+app.py
+- This is the main application file.
+- It contains Flask configuration, routes, database functions, resume parsing logic, scoring logic, job matching logic, authentication, admin functions, PDF export, and helper methods.
+
+templates/
+- Contains all HTML pages used by Flask.
+- Important pages include:
+  base.html: common layout
+  index.html: resume upload page
+  result.html: scan result page
+  history.html: scan history dashboard
+  history_detail.html: detailed saved report page
+  login.html: login page
+  register.html: registration page
+  admin.html: admin dashboard
+  contact.html: contact form
+  about.html: about page
+
+static/css/style.css
+- Contains the design and styling for the web application.
+
+static/js/app.js
+- Contains frontend JavaScript behavior.
+
+job_data.csv
+- Stores the local job recommendation catalog.
+- Each row contains a job title, keywords, and description.
+
+tas_reports.db
+- SQLite database file.
+- Stores users, resume scan reports, and contact messages.
+
+tests/test_app.py
+- Contains automated tests for important functionality.
+
+requirements.txt
+- Lists the Python dependencies required for the project.
+
+reports/
+- Contains generated project reports and final meeting explanation files.
+
+
+7. MAIN APPLICATION MODULES
+---------------------------
+The project can be explained in the following modules:
+
+1. User module
+- Handles registration, login, logout, current user detection, and access control.
+- Passwords are not stored directly. They are stored as hashes using Werkzeug.
+
+2. Resume upload module
+- Accepts PDF, DOCX, and TXT files.
+- Validates file extension.
+- Checks whether the actual file signature matches the extension.
+- Saves uploaded files temporarily.
+- Deletes temporary files after parsing.
+
+3. Resume parsing module
+- Extracts text from uploaded files.
+- Uses pypdf for PDF files.
+- Uses python-docx for DOCX files.
+- Reads TXT files directly.
+- Can optionally use OCR if scanned PDF support is installed.
+
+4. Resume analysis module
+- Normalizes extracted text.
+- Detects skills, contact information, education, work experience, action verbs, weak verbs, and formatting signals.
+- Estimates experience years where possible.
+- Builds a resume profile for scoring and feedback.
+
+5. Scoring module
+- Scores the resume across multiple criteria.
+- Calculates a weighted total score out of 100.
+- Adjusts score weights depending on the target role.
+
+6. Job matching module
+- Compares resume text with job catalog keywords.
+- Supports target job title and target job description input.
+- Finds matched and missing keywords.
+- Calculates role match percentages.
+
+7. Suggestion module
+- Generates resume improvement suggestions.
+- Suggests stronger bullet rewrites when weak bullet points are detected.
+- Gives feedback based on missing criteria and missing keywords.
+
+8. Report and history module
+- Saves scan results to SQLite.
+- Shows previous scans for logged-in users.
+- Displays detailed saved report pages.
+- Exports saved reports as PDF.
+
+9. Contact and admin module
+- Saves contact form submissions.
+- Allows admin users to view recent contact messages.
+- Allows admin users to add new job roles to the catalog.
+
+
+8. DATABASE DESIGN
+------------------
+The project uses SQLite because it is lightweight and suitable for a local or demo web application. The database file is tas_reports.db.
+
+The database has three main tables:
+
+1. users table
+Purpose:
+- Stores registered user accounts.
+- Supports login, registration, admin access, and report ownership.
+
+Important columns:
+- id: unique user ID
+- username: unique username
+- password_hash: hashed password
+- created_at: account creation timestamp
+
+2. reports table
+Purpose:
+- Stores resume scan results.
+- Supports history, detailed report view, previous score comparison, and PDF export.
+
+Important columns:
+- id: unique report ID
+- user_id: owner of the report
+- filename: uploaded resume filename
+- uploaded_at: scan timestamp
+- score: final score out of 100
+- matched_jobs: saved JSON data for role matches
+- criteria: saved JSON data for category scores
+- suggestions: saved JSON data for improvement suggestions
+- analysis: saved JSON data for detailed profile, score explanations, analysis steps, and bullet rewrites
+
+3. contacts table
+Purpose:
+- Stores contact or support form submissions.
+- Allows the admin to review user messages.
+
+Important columns:
+- id: unique message ID
+- user_id: optional user ID
+- name: sender name
+- email: sender email
+- subject: message subject
+- message: message body
+- created_at: submission timestamp
+
+Why JSON is used in the reports table:
+- Resume reports contain nested data such as lists of matched jobs, missing keywords, score explanations, and suggestions.
+- SQLite is simple and flexible for this project.
+- The app stores nested report data using json.dumps() and reads it back using json.loads().
+
+
+9. RESUME ANALYSIS FLOW
+-----------------------
+The main resume scan flow works like this:
+
+1. The user opens the home page.
+2. The user uploads a resume and optionally enters a target job title and job description.
+3. The app checks that the file extension is PDF, DOCX, or TXT.
+4. The file is saved temporarily using a safe UUID-based filename.
+5. The app checks that the file content matches the selected extension.
+6. Text is extracted from the file.
+7. The uploaded temporary file is deleted.
+8. Extracted text is normalized for analysis.
+9. The app builds a resume profile by detecting skills, entities, education, experience, verbs, and other signals.
+10. The app compares the resume with the target role, if provided.
+11. The app calculates category-wise scores.
+12. The app calculates a final weighted score.
+13. The app finds matching job roles from the catalog.
+14. The app generates suggestions and bullet rewrite examples.
+15. The report is saved to the database if possible.
+16. The result page displays the score, breakdown, matched jobs, missing keywords, suggestions, and analysis steps.
+
+
+10. SCORING CRITERIA
+--------------------
+The system evaluates the resume using the following categories:
+
+1. Contact Information
+- Checks whether the resume includes email or phone contact details.
+
+2. Professional Summary
+- Checks whether the resume has a clear summary or objective-style opening section.
+
+3. Work Experience
+- Checks for work history, role titles, experience indicators, and date ranges.
+
+4. Education
+- Checks for education-related terms such as degree, university, college, diploma, bachelor, or master.
+
+5. Skills
+- Detects technical and professional skills using predefined skill synonyms.
+
+6. TAS Optimization
+- Checks resume optimization signals such as keywords, action verbs, measurable language, and scan-friendly content.
+
+7. Consistency
+- Checks structure and formatting consistency signals.
+
+8. Proofreading
+- Checks for common typo patterns and quality issues.
+
+9. File Format
+- Gives credit for supported file types.
+
+10. Relevance
+- Measures how relevant the resume is to the target role or description.
+
+The final score is calculated using weighted scoring. Some roles have adjusted weights. For example, a Data Analyst role gives more importance to skills and relevance, while a Software Engineer role gives more importance to skills, work experience, testing, and technical signals.
+
+
+11. JOB MATCHING LOGIC
+----------------------
+The job matching feature uses both the local catalog and optional target job information.
+
+Local catalog:
+- Job roles are stored in job_data.csv.
+- Each role has a title, keywords, and description.
+- Default roles include examples such as Data Analyst, Software Engineer, Product Manager, Technical Writer, and Digital Marketing Specialist.
+
+Target role matching:
+- The user can enter a job title and job description.
+- The app extracts useful keywords from the title and description.
+- For known roles, it adds role-specific keyword hints.
+- It avoids low-value words such as "job", "role", "developer", or "candidate" when calculating missing keywords.
+
+Matching methods:
+- Keyword matching checks whether important role keywords appear in the resume.
+- Weighted term comparison and cosine similarity help estimate text similarity.
+- The result includes matched keywords, missing keywords, and a match percentage.
+
+
+12. SUGGESTIONS AND BULLET REWRITES
+-----------------------------------
+The project does not only give a score. It also explains how to improve the resume.
+
+Suggestions may include:
+- Add stronger contact information.
+- Add a professional summary.
+- Add missing skills related to the target role.
+- Improve work experience details.
+- Add measurable achievements.
+- Use stronger action verbs.
+- Improve proofreading and formatting.
+- Add keywords from the target job description.
+
+Bullet rewrite feature:
+- The app looks for weak bullet points.
+- It identifies weak wording such as "helped", "worked on", "responsible for", or "assisted".
+- It creates improved versions that are more achievement-focused and role-relevant.
+
+This makes the feedback practical because the user can directly improve their resume based on the output.
+
+
+13. USER FEATURES
+-----------------
+Main user-facing features:
+
+1. Resume upload
+- Users can upload PDF, DOCX, or TXT resumes.
+
+2. Target role input
+- Users can enter a job title and job description.
+
+3. Result page
+- Shows total score, score breakdown, explanations, matched jobs, missing keywords, suggestions, and bullet rewrites.
+
+4. Registration and login
+- Users can create accounts and sign in.
+
+5. History page
+- Logged-in users can view previous scan reports.
+- The page includes dashboard values such as total scans, average score, best score, and recent trend data.
+
+6. Report details
+- Users can open a saved report and view its full analysis.
+
+7. PDF export
+- Users can export saved reports as PDF files.
+
+8. Contact form
+- Users can send contact or support messages.
+
+
+14. ADMIN FEATURES
+------------------
+The admin dashboard is available only to the configured admin user.
+
+Admin functions:
+- View recent contact form submissions.
+- See total number of users and reports.
+- View the current job catalog.
+- Add new job roles, keywords, and descriptions to job_data.csv.
+
+This makes the system maintainable because the job recommendation catalog can be updated without changing the core code.
+
+
+15. SECURITY AND VALIDATION
+---------------------------
+The project includes several security and validation features:
+
+1. Password hashing
+- Passwords are stored as hashes, not plain text.
+- generate_password_hash() and check_password_hash() are used.
+
+2. Secure filenames
+- Uploaded filenames are sanitized using secure_filename().
+
+3. Temporary upload storage
+- Uploaded resumes are saved only temporarily.
+- The uploaded file is deleted after text extraction.
+
+4. File extension validation
+- Only PDF, DOCX, and TXT files are allowed.
+
+5. File signature validation
+- The app checks that the file content matches its extension.
+- For example, a fake PDF with .pdf extension is rejected if it does not have a PDF signature.
+
+6. CSRF protection
+- POST requests are protected using session-based CSRF tokens.
+
+7. Rate limiting
+- Important form actions have simple in-memory rate limits.
+- This helps reduce repeated abuse of login, register, contact, and analysis routes.
+
+8. Session security settings
+- Cookies are configured with HTTPOnly and SameSite settings.
+- Secure cookies are enabled in production mode.
+
+9. Input length validation
+- The app limits long text inputs such as contact messages and job descriptions.
+
+
+16. ROUTES AND RESPONSIBILITIES
+-------------------------------
+/ 
+- GET shows the home page and upload form.
+- POST processes resume upload, analysis, scoring, matching, saving, and result rendering.
+
+/analyze
+- POST alias for resume analysis.
+
+/login
+- Handles user login.
+
+/register
+- Handles new user registration.
+
+/logout
+- Logs out the current user.
+
+/history
+- Shows saved scan reports for logged-in users.
+
+/history/<report_id>
+- Shows one saved report in detail.
+
+/history/<report_id>/export.pdf
+- Exports a saved report as a PDF file.
+
+/contact
+- Shows and processes the contact form.
+
+/about
+- Shows project information.
+
+/admin
+- Shows admin dashboard and handles adding job catalog roles.
+
+
+17. TESTING
+-----------
+The project includes automated tests in tests/test_app.py.
+
+The tests cover:
+- File extension validation.
+- Target job matching.
+- Role keyword inference.
+- Skill extraction with aliases.
+- Experience year estimation.
+- Role-adjusted scoring.
+- CSRF protection.
+- Resume upload and analysis.
+- Temporary upload deletion.
+- Bullet rewrite generation.
+- Rejection of mismatched file content and extension.
+- Contact form email validation.
+- Register, login, history, report detail, and PDF export flow.
+- Admin job catalog update.
+
+Testing is important because this project has several connected features. The tests confirm that key workflows continue to work after changes.
+
+
+18. SAMPLE DEMONSTRATION SCRIPT
+-------------------------------
+In the final meeting, the project can be demonstrated with this flow:
+
+1. Open the application home page.
+2. Explain that the user can upload a resume in PDF, DOCX, or TXT format.
+3. Enter a target job title, for example "Data Analyst".
+4. Enter a short job description with skills such as SQL, dashboards, analytics, reporting, and stakeholder communication.
+5. Upload a sample resume.
+6. Submit the form.
+7. On the result page, explain:
+   - total score
+   - category-wise score
+   - score explanations
+   - matched roles
+   - matched keywords
+   - missing keywords
+   - improvement suggestions
+   - suggested bullet rewrites
+8. Log in or register a user.
+9. Open the history page and show saved reports.
+10. Open a detailed report.
+11. Export the report as PDF.
+12. Log in as admin and show:
+   - contact messages
+   - user/report counts
+   - job catalog
+   - add new job role feature
+
+
+19. HOW TO EXPLAIN THE PROJECT IN THE MEETING
+---------------------------------------------
+You can explain the project like this:
+
+"This project is a Talent Acquisition System built using Flask and SQLite. The main purpose is to analyze resumes and show how well they are optimized for job screening. A user uploads a resume, optionally enters a target job role and description, and the system extracts the resume text. Then it checks important resume sections such as contact information, summary, experience, education, skills, formatting, proofreading, and relevance.
+
+The application calculates a weighted score out of 100 and also compares the resume with job keywords. It shows matched keywords, missing keywords, recommended roles, and improvement suggestions. The system can also suggest better resume bullet points by replacing weak wording with stronger achievement-focused language.
+
+For logged-in users, every scan can be saved in the SQLite database. Users can later view their history, open detailed reports, and export reports as PDF. The admin can manage the job catalog and review contact messages. The project also includes validation and security features such as password hashing, CSRF protection, rate limiting, safe upload handling, and file signature checks."
+
+
+20. IMPORTANT FUNCTIONS TO MENTION
+----------------------------------
+Important functions in app.py:
+
+init_db()
+- Creates and updates database tables.
+
+load_job_data()
+- Loads the job catalog from job_data.csv.
+
+allowed_file()
+- Checks whether the uploaded file extension is supported.
+
+file_signature_matches()
+- Checks whether the file content matches the claimed extension.
+
+save_upload_temporarily()
+- Saves the uploaded resume temporarily.
+
+extract_resume_text()
+- Extracts text from PDF, DOCX, or TXT files.
+
+extract_resume_profile()
+- Detects skills, entities, experience years, education, action verbs, and weak verbs.
+
+build_criteria_scores()
+- Builds category-wise resume scores.
+
+build_score_details()
+- Creates explanations for each score category.
+
+calculate_role_adjusted_score()
+- Calculates the final score using role-specific weights.
+
+build_target_job_match()
+- Compares the resume with the target job title and description.
+
+find_applicable_jobs()
+- Finds matching jobs from the job catalog.
+
+build_resume_suggestions()
+- Creates practical suggestions to improve the resume.
+
+rewrite_resume_bullets()
+- Generates improved versions of weak resume bullet points.
+
+save_report()
+- Saves scan results in the reports table.
+
+get_report_payload()
+- Loads a saved report for detail view or PDF export.
+
+build_simple_pdf()
+- Creates a downloadable PDF report.
+
+
+21. STRENGTHS OF THE PROJECT
+----------------------------
+The strengths of the project are:
+
+- It is a complete end-to-end web application.
+- It supports multiple resume formats.
+- It gives explainable scoring, not just a number.
+- It supports target role and job description matching.
+- It provides matched and missing keyword feedback.
+- It saves user history.
+- It supports PDF export.
+- It includes admin functionality.
+- It has practical security measures.
+- It includes automated tests.
+- It is easy to extend by adding more jobs to job_data.csv.
+
+
+22. LIMITATIONS
+---------------
+Some limitations of the current version are:
+
+- The scoring is rule-based, so it is not the same as a full enterprise Applicant Tracking System.
+- OCR for scanned PDFs depends on external tools such as Tesseract and Poppler.
+- The job catalog is stored in a CSV file, so very large catalogs would need a stronger database design.
+- The PDF export is simple and text-based.
+- The system does not permanently store the original resume file for privacy reasons.
+- The NLP features depend on available local Python packages and spaCy model support.
+
+
+23. FUTURE ENHANCEMENTS
+-----------------------
+Possible future improvements:
+
+- Add more advanced machine learning-based resume ranking.
+- Add richer PDF report design.
+- Add recruiter-side candidate comparison.
+- Add charts for skill gaps and score trends.
+- Add support for more resume formats.
+- Add email notifications for contact messages.
+- Add role-specific templates for resume suggestions.
+- Move the job catalog fully into the database.
+- Add a stronger admin panel for editing and deleting job roles.
+- Add cloud deployment with a production database.
+
+
+24. FINAL CONCLUSION
+--------------------
+The Talent Acquisition System is a practical resume analysis web application. It combines file upload, text extraction, rule-based NLP, scoring, job matching, suggestions, history, PDF export, authentication, admin features, and database storage.
+
+The project demonstrates full-stack development because it includes frontend pages, backend routes, database design, file handling, authentication, security validation, data processing, and automated testing.
+
+In the final meeting, the key message is that this project helps users understand how their resume performs against talent acquisition screening criteria and gives them clear steps to improve their resume before applying for jobs.
+
